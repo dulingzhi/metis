@@ -460,7 +460,12 @@ mod tests {
     fn dead_owner_journal_is_reclaimed_before_the_swap() {
         let (_dir, home, journals) = setup();
         super::super::ensure_dir(&journals).expect("mkdir");
-        let file = home.join("d.txt");
+        // **必须先规范化**：`swap_file` 内部会 `canonical(file)`，再用规范化后的路径
+        // 算 journal 位置。测试若用未规范化的路径埋 journal，两边对不上 ——
+        // 在 Windows 上 `canonicalize` 会加 `\\?\` 前缀，于是 journal 根本找不到，
+        // 测试**碰巧通过**；Linux 上路径不变，才暴露出真实行为。
+        // 也就是说：这个测试之前在 Windows 上测的根本不是回收路径。
+        let file = canonical(&home.join("d.txt")).expect("canonical");
         fs::write(&file, b"dead-state").expect("seed");
         let journal = journal_path(&journals, &file);
         let record = JournalRecord {
@@ -477,8 +482,11 @@ mod tests {
         fs::write(&journal, serde_json::to_vec(&record).expect("json")).expect("seed journal");
 
         let (mut swap, _) = swap_file(&file, b"fresh", &journals, &home).expect("reclaim then swap");
+        // 回收 = **撤销那个死进程的交换**，把文件还原成它的 `backup`（"original"）。
+        // 这是有意设计：崩溃在半途的交换不该把半成品留在磁盘上（铁律 3）。
+        assert_eq!(fs::read(&file).expect("read"), b"fresh".to_vec(), "回收之后应写入本次内容");
         swap.undo().expect("undo");
-        assert_eq!(fs::read(&file).expect("read"), b"dead-state".to_vec(), "撤销应回到回收后的状态");
+        assert_eq!(fs::read(&file).expect("read"), b"original".to_vec(), "撤销应回到回收后的状态（即死进程的 backup）");
     }
 
     #[test]

@@ -269,10 +269,23 @@ mod tests {
 
     #[test]
     fn unique_sibling_keeps_directory_and_extension_family() {
-        let first = unique_sibling(Path::new("D:\\a\\b\\state.json"), "tmp");
-        let second = unique_sibling(Path::new("D:\\a\\b\\state.json"), "tmp");
-        assert_ne!(first, second);
-        assert_eq!(first.parent(), Some(Path::new("D:\\a\\b")));
-        assert!(first.file_name().is_some_and(|n| n.to_string_lossy().contains("tmp")));
+        // **用平台无关的方式构造路径**。
+        //
+        // 原来写的是字面量 `Path::new("D:\\a\\b\\state.json")` —— 在 Windows 上
+        // 反斜杠是分隔符，`parent()` 是 `D:\a\b`；在 Linux/macOS 上反斜杠只是普通
+        // 字符，整串是**一个文件名**，`parent()` 是空路径，断言必然失败。
+        // CI 的 Linux 测试第一次跑就红了。
+        let dir = Path::new("a").join("b");
+        let file = dir.join("state.json");
+        let first = unique_sibling(&file, "tmp");
+        let second = unique_sibling(&file, "tmp");
+        assert_ne!(first, second, "两次生成必须不同");
+        assert_eq!(first.parent(), Some(dir.as_path()), "必须留在同一个目录里");
+        let name = first.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
+        assert!(name.contains("tmp"), "应带上 kind 标记：{name}");
+        // **原名要完整保留在临时名里**（含扩展名），这样清理时能看出它属于谁。
+        // 实际形状是 `.state.json.tmp-<tag>`。
+        assert!(name.contains("state.json"), "原名应保留：{name}");
+        assert!(name.starts_with('.'), "临时文件应是隐藏名：{name}");
     }
 }

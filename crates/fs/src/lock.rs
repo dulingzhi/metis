@@ -44,6 +44,7 @@ pub fn is_pid_alive(pid: u32) -> bool {
 /// 判断 pid 还活着。
 ///
 /// 用"发 0 号信号"的方式探测；在 Windows 上通过注入的探测函数实现（见 [`set_alive_probe`]）。
+
 fn pid_alive(pid: u32) -> bool {
     if pid == 0 {
         return false;
