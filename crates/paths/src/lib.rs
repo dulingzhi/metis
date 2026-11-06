@@ -333,6 +333,10 @@ mod tests {
         for part in parts {
             out.push(part);
         }
+        // 自检：这必须是绝对路径。**这就是这类测试在 Unix 上翻车的原因** ——
+        // `Path::new("D:\\x")` 在 Unix 上是相对路径，后续 `parent()`/`starts_with()`
+        // 全部失真。把它做成断言，写错会当场炸，而不是在 CI 上才炸。
+        assert!(out.is_absolute(), "abs() 必须产出绝对路径：{out:?}");
         out
     }
 
@@ -365,8 +369,9 @@ mod tests {
 
     #[test]
     fn relative_env_home_resolves_against_cwd() {
-        let paths =
-            Paths::from_env_with(|key| (key == ENV_HOME).then(|| "data/metis".to_owned()), Some(fake_home()), Some(PathBuf::from("D:\\work"))).expect("paths");
+        // `cwd` 必须是**绝对的**，否则在 Unix 上 `D:\work` 是相对路径，
+        // join 之后仍然不是绝对路径，这条断言必失败。
+        let paths = Paths::from_env_with(|key| (key == ENV_HOME).then(|| "data/metis".to_owned()), Some(fake_home()), Some(abs(&["work"]))).expect("paths");
         assert!(paths.home().is_absolute(), "相对路径必须被解析成绝对路径");
         assert!(paths.home().ends_with("metis"));
     }
@@ -387,7 +392,7 @@ mod tests {
 
     #[test]
     fn all_children_live_under_home() {
-        let paths = Paths::with_home("D:\\ap");
+        let paths = Paths::with_home(abs(&["ap"]));
         for child in [
             paths.state_file(),
             paths.personas_dir(),
@@ -408,20 +413,21 @@ mod tests {
 
     #[test]
     fn persona_file_joins_id_into_personas_dir() {
-        let paths = Paths::with_home("D:\\ap");
+        let paths = Paths::with_home(abs(&["ap"]));
         let id = metis_core::PersonaId::parse("concise").expect("id");
         assert_eq!(paths.persona_file(&id), paths.personas_dir().join("concise.md"));
     }
 
     #[test]
     fn journal_dir_can_be_overridden() {
-        let paths = Paths::with_home("D:\\ap").with_journal_dir("D:\\tmp\\journals");
-        assert_eq!(paths.restore_journal_dir(), abs(&["tmp", "journals"]));
+        let journal = abs(&["tmp", "journals"]);
+        let paths = Paths::with_home(abs(&["ap"])).with_journal_dir(&journal);
+        assert_eq!(paths.restore_journal_dir(), journal);
     }
 
     #[test]
     fn default_journal_dir_mentions_metis() {
-        let paths = Paths::with_home("D:\\ap");
+        let paths = Paths::with_home(abs(&["ap"]));
         assert!(paths.restore_journal_dir().to_string_lossy().contains("metis-restore"));
     }
 
@@ -447,17 +453,20 @@ mod tests {
     #[test]
     fn harness_home_defaults_to_user_home() {
         let harness = HarnessId::parse("codex").expect("id");
-        let paths = Paths::with_home("D:\\ap");
-        let home = paths.harness_home(&harness, |_| None, Path::new("C:\\Users\\example")).expect("home");
+        let paths = Paths::with_home(abs(&["ap"]));
+        let user_home = fake_home();
+        let home = paths.harness_home(&harness, |_| None, &user_home).expect("home");
         assert!(home.ends_with(".codex"));
-        assert!(home.starts_with("C:\\Users\\example"));
+        // **`starts_with` 必须拿 `&Path`**：`Path::new("C:\\Users\\example")` 在 Unix 上
+        // 是相对路径，`starts_with` 永远不成立（CI 的 Linux 测试踩过）。
+        assert!(home.starts_with(&user_home), "{home:?} 应挂在 {user_home:?} 下");
     }
 
     #[test]
     fn unknown_harness_home_is_an_error() {
         let harness = HarnessId::parse("cursor").expect("id");
-        let paths = Paths::with_home("D:\\ap");
-        let result = paths.harness_home(&harness, |_| None, Path::new("C:\\Users\\example"));
+        let paths = Paths::with_home(abs(&["ap"]));
+        let result = paths.harness_home(&harness, |_| None, &fake_home());
         assert_eq!(result.err().map(|e| e.kind()), Some(ErrorKind::UnknownHarness));
     }
 
@@ -465,40 +474,41 @@ mod tests {
     fn xdg_style_env_is_a_parent_not_the_harness_home() {
         // 回归：XDG_CONFIG_HOME 是"配置根"，opencode 的目录是它下面的 `opencode/`。
         // 把环境变量当成宿主目录，会把文件写到 `~/.config/plugins/` 这种错地方。
-        let paths = Paths::with_home("D:\\ap");
+        let paths = Paths::with_home(abs(&["ap"]));
+        let xdg = abs(&["xdg"]);
         let home = paths
-            .harness_home(
-                &HarnessId::parse("opencode").expect("id"),
-                |key| (key == "XDG_CONFIG_HOME").then(|| "D:\\xdg".to_owned()),
-                Path::new("C:\\Users\\example"),
-            )
+            .harness_home(&HarnessId::parse("opencode").expect("id"), |key| (key == "XDG_CONFIG_HOME").then(|| xdg.display().to_string()), &fake_home())
             .expect("home");
-        assert_eq!(home, abs(&["xdg", "opencode"]), "XDG 之下还要拼一级");
+        assert_eq!(home, xdg.join("opencode"), "XDG 之下还要拼一级");
     }
 
     #[test]
     fn home_style_env_is_the_harness_home_itself() {
         // 对照：CODEX_HOME 就是宿主目录，不能再拼一级。
-        let paths = Paths::with_home("D:\\ap");
+        let paths = Paths::with_home(abs(&["ap"]));
+        // **输入与断言必须用同一个来源**：只改断言不改输入，两边在 Unix 上对不上
+        // （`D:\codex` 在 Unix 上是相对路径，而 `abs()` 产出绝对路径）。
+        let codex = abs(&["codex"]);
         let home = paths
-            .harness_home(&HarnessId::parse("codex").expect("id"), |key| (key == "CODEX_HOME").then(|| "D:\\codex".to_owned()), Path::new("C:\\Users\\example"))
+            .harness_home(&HarnessId::parse("codex").expect("id"), |key| (key == "CODEX_HOME").then(|| codex.display().to_string()), &fake_home())
             .expect("home");
-        assert_eq!(home, abs(&["codex"]));
+        assert_eq!(home, codex);
     }
 
     #[test]
     fn harness_root_override_redirects_every_harness() {
         // 这一条保护的是"测试不碰真实用户目录"：没有它，apply 的测试会往 ~/.pi 里写东西。
-        let paths = Paths::with_home("D:\\ap").with_harness_root("D:\\fake-homes");
-        let home = paths.harness_home(&HarnessId::parse("codex").expect("id"), |_| None, Path::new("C:\\Users\\example")).expect("home");
-        assert_eq!(home, abs(&["fake-homes", "codex"]), "harness root 覆盖之后应挂在新根下");
-        assert!(!home.starts_with("C:\\Users\\example"), "绝不能落到真实主目录");
+        let root = abs(&["fake-homes"]);
+        let paths = Paths::with_home(abs(&["ap"])).with_harness_root(&root);
+        let home = paths.harness_home(&HarnessId::parse("codex").expect("id"), |_| None, &fake_home()).expect("home");
+        assert_eq!(home, root.join("codex"), "harness root 覆盖之后应挂在新根下");
+        assert!(!home.starts_with(fake_home()), "绝不能落到真实主目录");
     }
 
     #[test]
     fn normalise_removes_dot_and_parent_segments() {
-        assert_eq!(normalise(Path::new("D:\\a\\b\\..\\c")).map(|p| p.to_string_lossy().into_owned()), Ok("D:\\a\\c".to_owned()));
-        assert_eq!(normalise(Path::new("D:\\a\\.\\b")).map(|p| p.to_string_lossy().into_owned()), Ok("D:\\a\\b".to_owned()));
+        assert_eq!(normalise(&abs(&["a", "b", "..", "c"])).map(|p| p.to_string_lossy().into_owned()), Ok(abs(&["a", "c"]).to_string_lossy().into_owned()));
+        assert_eq!(normalise(&abs(&["a", ".", "b"])).map(|p| p.to_string_lossy().into_owned()), Ok(abs(&["a", "b"]).to_string_lossy().into_owned()));
     }
 
     #[test]

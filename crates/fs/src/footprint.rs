@@ -294,6 +294,7 @@ mod tests {
         for part in parts {
             out.push(part);
         }
+        assert!(out.is_absolute(), "abs() 必须产出绝对路径：{out:?}");
         out
     }
 

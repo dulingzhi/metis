@@ -40,6 +40,7 @@
 | **四个屏幕（P3）** | `crates/ui-egui/src/screens/mod.rs` | 8 条：四屏渲染、深色渲染、三模式瓦片、应用按钮启用逻辑、空状态、搜索过滤、busy 态、关于屏 |
 | **侧栏（P2）** | `crates/ui-egui/src/sidebar.rs` | 6 条：图标映射、窄窗自动折叠、手动折叠优先、两态渲染、四屏选中态。**真机验证** 1300px 展开 / 820px 自动折叠 |
 | **备份体积管理**（先算再删，被引用的一律保留） | `crates/engine/src/backups.rs`、`commands_backups.rs` | `backups::tests::*`（10 条）、`commands_backups::tests::*`（5 条）。关键：`prune_removes_only_orphans`、`everything_referenced_means_nothing_is_prunable`、CLI 默认预览 |
+| **执行器卡片（自适应网格）** | `crates/ui-egui/src/screens/mod.rs` | 6 条：`grid_columns` 三档宽度、卡片固定高度、首屏预算、浮层选中才画/未知 id 不画/不改变页图元数。**真机验证**：4 列流式换行、下拉不超框、详情浮层对齐 |
 | **GUI GitHub 导入** | `crates/ui-egui/src/{actions,app,screens}.rs` | 5 条：默认源、空地址拦截、命令映射、后台任务、标签。**真机验证**：点「导入」→ 5 份人设出现在列表，显示「导入完成」 |
 | **GitHub 人设源** | `crates/engine/src/tarball.rs`、`persona_import.rs` | 20 条：tarball 解包（前缀剥离/文档跳过/非 UTF-8/坏包/目录）、单请求验证、无索引兼容、404/网络/坏 JSON。**真机验证**：从 `dulingzhi/metis-personas` 导入 5 份，1.3s |
 | **CLI 补齐（4 条）** | `apps/metis/src/main.rs` | 10 条 e2e：`use` 无 id 打印/列例外、`sync` 不改人设、`install` 只开一条通道、`install nope` 退出 2、`slash status/on/off` 往返 |

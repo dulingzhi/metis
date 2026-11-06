@@ -883,6 +883,34 @@
   `github.com` ✅ / `api.github.com` ✅（限流 60/h）/ `codeload.github.com` ✅ /
   **`raw.githubusercontent.com` ❌ 不可达**。所以选 codeload tarball。
 
+### G74. 测试里的 Windows 路径字面量，在 Unix 上是"相对路径"
+- **现象**：CI 的 Linux 测试红了一片，报的却是些看起来无关的断言
+  （`left: "D:\work/D:\data\metis"`、`gate_refuses_cwd_inside_home` 不拒绝）。
+- **原因**：测试里写 `Path::new("C:\\Users\\example")`。反斜杠在 Linux/macOS 上
+  **只是普通字符**，所以那一整串是**一个文件名**（相对路径）：
+  没有 `parent()`、`components()` 拆不出层级、`starts_with()` 永远不成立。
+  所有依赖路径语义的断言在 Unix 上全部失真。
+- **规则**：测试里构造绝对路径**必须平台感知**，别写盘符字面量：
+  ```rust
+  fn abs(parts: &[&str]) -> PathBuf {
+      let mut out = if cfg!(windows) { PathBuf::from("D:\\") } else { PathBuf::from("/") };
+      for part in parts { out.push(part); }
+      out
+  }
+  ```
+  例外：**纯字符串比较**（比如 `owner_key` 的大小写归一）用字面量是安全的，
+  因为它不解析路径结构。
+
+### G75. `egui::Area` 第一帧只登记，不产出几何
+- **现象**：无头渲染详情浮层，"选中后应有内容"的测试只数到 **8 个图元**
+  （只有背景层），看起来像浮层根本没画。
+- **原因**：`Area` 的尺寸/位置要到**第二帧**才定下来。只跑一帧看到的是
+  "刚登记、还没排版"的中间态。而 `harness_detail` 单独调用（不用 Area）
+  是能画出东西的 —— 这个差异一开始把我引向了错误的方向。
+- **规则**：无头测 `Area` / 浮层类 UI，**至少跑 2~3 帧**再数图元。
+  这也是为什么"同一块面板，同级渲染正常、放进浮层就消失"这种结论要警惕 ——
+  先确认是**真的没画**，还是**只测了第一帧**。
+
 ### G69. `HarnessId::parse` 只校验格式，不校验"已注册"
 - **现象**：`metis install nope` 一路"成功"，打印"已为 1 家开启 install 通道：nope"，
   实际什么都没写、也没报错。
