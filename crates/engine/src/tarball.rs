@@ -38,6 +38,7 @@ pub const MAX_FILE_BYTES: usize = 2 * 1024 * 1024;
 /// - 单文件超限直接跳过（不报错：那多半不是人设）。
 pub fn extract(gz: &[u8]) -> Result<Tarball> {
     let mut out = Tarball::default();
+    let mut collected: BTreeMap<String, String> = BTreeMap::new();
     let mut total = 0_usize;
 
     // `GzDecoder` 是**惰性**的：`tar::Archive::new` 不校验 gzip 头，错误要到
@@ -82,10 +83,11 @@ pub fn extract(gz: &[u8]) -> Result<Tarball> {
         if relative == "personas.json" {
             out.index = Some(text);
         } else {
-            out.personas.insert(relative, text);
+            collected.insert(relative, text);
         }
     }
 
+    out.personas = pick_layout(collected);
     Ok(out)
 }
 
@@ -138,12 +140,39 @@ fn is_wanted(relative: &str) -> bool {
     if relative == "personas.json" {
         return true;
     }
-    let Some(name) = relative.strip_prefix("personas/") else { return false };
-    if !name.ends_with(".md") {
+    if !relative.ends_with(".md") {
         return false;
     }
-    let stem = name.trim_end_matches(".md").rsplit('/').next().unwrap_or_default().to_ascii_lowercase();
-    !matches!(stem.as_str(), "readme" | "license" | "licence" | "changelog" | "contributing" | "notice" | "authors" | "code_of_conduct" | "security")
+    // 收两类：`personas/**` 与**仓库根目录的 `*.md`**。
+    //
+    // 很多第三方人设库就是把文件平铺在根目录（`ZiChuanLan/some-magic`：
+    // `dafeiyu.md` / `xiao­majiang.md` / `CTF.md`）。只认 `personas/` 会把它们**全漏掉**。
+    let under_personas = relative.starts_with("personas/");
+    let at_root = !relative.contains('/');
+    if !under_personas && !at_root {
+        return false;
+    }
+    let stem = relative.trim_end_matches(".md").rsplit('/').next().unwrap_or_default().to_ascii_lowercase();
+    !is_documentation(&stem)
+}
+
+/// 是不是"文档"而不是"人设"。
+fn is_documentation(stem: &str) -> bool {
+    matches!(
+        stem,
+        "readme" | "license" | "licence" | "changelog" | "contributing" | "notice" | "authors" | "code_of_conduct" | "security" | "index" | "summary"
+    )
+}
+
+/// 从"两类都收了"的结果里挑出真正要用的那一类。
+///
+/// 规则：**有 `personas/` 目录就只用它**（那是明确的约定，根目录的 `.md`
+/// 多半是说明或配置）；否则用根目录的。
+fn pick_layout(mut collected: BTreeMap<String, String>) -> BTreeMap<String, String> {
+    if collected.keys().any(|k| k.starts_with("personas/")) {
+        collected.retain(|k, _| k.starts_with("personas/"));
+    }
+    collected
 }
 
 /// `codeload` 的 tarball 地址。
@@ -213,6 +242,51 @@ mod tests {
         let gz = make_tarball(&[("repo-main/src/main.rs", "fn main() {}"), ("repo-main/docs/guide.md", "# 指南"), ("repo-main/personas/ok.md", "ok")]);
         let tarball = extract(&gz).expect("extract");
         assert_eq!(tarball.personas.len(), 1, "只应保留 personas/ 下的：{:?}", tarball.personas.keys());
+    }
+
+    #[test]
+    fn root_level_personas_are_collected() {
+        // 第三方人设库常常把文件平铺在根目录（`ZiChuanLan/some-magic`）。
+        // 只认 `personas/` 会把它们**全漏掉** —— 实测导入结果是 0 份。
+        let gz = make_tarball(&[
+            ("some-magic-main/README.md", "# 说明"),
+            ("some-magic-main/dafeiyu.md", "---\nid: dafeiyu\n---\n\n甲"),
+            ("some-magic-main/xiaomajiang.md", "---\nid: xiaomajiang\n---\n\n乙"),
+            ("some-magic-main/CTF.md", "---\nid: CTF\n---\n\n丙"),
+        ]);
+        let tarball = extract(&gz).expect("extract");
+        assert_eq!(tarball.personas.len(), 3, "{:?}", tarball.personas.keys());
+        assert!(tarball.personas.contains_key("CTF.md"), "大写文件名也要收");
+        assert!(!tarball.personas.keys().any(|k| k.contains("README")), "README 不该进来");
+    }
+
+    #[test]
+    fn the_personas_directory_wins_over_the_root() {
+        // 两类都在时**只用 `personas/`** —— 那是明确的约定，根目录的 `.md`
+        // 多半是说明或配置，混进来会污染人设库。
+        let gz = make_tarball(&[("repo-main/NOTES.md", "随手记"), ("repo-main/personas/real.md", "真人设")]);
+        let tarball = extract(&gz).expect("extract");
+        assert_eq!(tarball.personas.len(), 1, "{:?}", tarball.personas.keys());
+        assert!(tarball.personas.contains_key("personas/real.md"));
+    }
+
+    #[test]
+    fn nested_markdown_outside_personas_is_not_collected() {
+        // 只收根目录一层；`docs/*.md` 之类不该被当成人设。
+        let gz = make_tarball(&[("repo-main/docs/a.md", "文档"), ("repo-main/notes/b.md", "笔记"), ("repo-main/root.md", "根目录的")]);
+        let tarball = extract(&gz).expect("extract");
+        assert_eq!(tarball.personas.len(), 1, "{:?}", tarball.personas.keys());
+        assert!(tarball.personas.contains_key("root.md"));
+    }
+
+    #[test]
+    fn more_documentation_names_are_excluded() {
+        // 逐个验证：加上这个文档文件之后，人设数量不变。
+        for doc in ["INDEX", "SUMMARY", "LICENSE", "CODE_OF_CONDUCT", "NOTICE", "CHANGELOG"] {
+            let gz = make_tarball(&[("repo-main/real.md", "真的"), (&format!("repo-main/{doc}.md"), "文档")]);
+            let tarball = extract(&gz).expect("extract");
+            assert_eq!(tarball.personas.len(), 1, "{doc}.md 不该被收进来：{:?}", tarball.personas.keys());
+        }
     }
 
     #[test]

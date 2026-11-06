@@ -27,6 +27,12 @@ pub struct HarnessRow {
     pub armed: Vec<Channel>,
     /// 本机装没装（未知时为 `None`）。
     pub installed: Option<bool>,
+    /// 找到了可执行文件（原版区分"已就绪"与"发现配置"）。
+    pub has_binary: bool,
+    /// 这一家单独指定的人设（`None` = 跟随全局）。
+    pub persona: Option<String>,
+    /// 这一家单独指定的模式（`None` = 跟随全局）。
+    pub mode: Option<Mode>,
 }
 
 impl HarnessRow {
@@ -69,6 +75,9 @@ pub fn row_from_spec(spec: &'static Spec, armed: &[Channel], activation: Option<
         hot: caps.hot.how.clone(),
         armed: armed.to_vec(),
         installed: None,
+        has_binary: false,
+        persona: None,
+        mode: None,
     }
 }
 
@@ -100,6 +109,18 @@ pub fn scope_summary(rows: &[HarnessRow]) -> String {
     let armed = rows.iter().filter(|row| !row.armed.is_empty()).count();
     let total = rows.iter().filter(|row| row.injectable).count();
     format!("已接管 {armed} 家 · 可接管 {total} 家")
+}
+
+/// 模式的**短名**（卡片里的小下拉用）。
+///
+/// 完整名见 [`mode_label`]；短名是为了在小尺寸下不挤。
+pub fn mode_short(mode: Mode) -> &'static str {
+    match mode {
+        Mode::Replace => "换身份",
+        Mode::Strict => "只留人设",
+        Mode::Append => "追加",
+        Mode::Off => "关闭",
+    }
 }
 
 /// 每个模式对应的图标（选择瓦片上用）。

@@ -170,10 +170,16 @@ pub fn import_github(
         }
         None => tarball
             .personas
-            .keys()
-            .filter_map(|file| {
-                let stem = std::path::Path::new(file).file_stem().and_then(|s| s.to_str())?;
-                Some((stem.to_owned(), file.clone()))
+            .iter()
+            .map(|(file, text)| {
+                // **优先用 front-matter 里声明的 id**，文件名只作兜底。
+                //
+                // 第三方库的文件名不一定是合法 id（`CTF.md` → `CTF`，
+                // 或者作者用中文/大写命名），而文件自己声明的 id 才是权威。
+                let stem = std::path::Path::new(file).file_stem().and_then(|s| s.to_str()).unwrap_or_default();
+                let declared = metis_persona::parse_persona(text).meta.id.unwrap_or_default();
+                let id = if !declared.trim().is_empty() && PersonaId::parse(declared.trim()).is_ok() { declared.trim().to_owned() } else { stem.to_owned() };
+                (id, file.clone())
             })
             .collect(),
     };

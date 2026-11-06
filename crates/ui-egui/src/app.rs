@@ -361,6 +361,13 @@ fn collect_snapshot_with(engine: &Engine, commands: &Commands) -> metis_core::Re
                 row.on = on;
                 row.explain = explain;
                 row.installed = item.get("installed").and_then(|v| v.as_bool());
+                // 原版靠这个区分「已就绪」（有可执行文件）与「发现配置」（只有配置目录）。
+                row.has_binary = item.pointer("/bin").and_then(|v| v.as_str()).is_some_and(|bin| !bin.is_empty());
+                // 分家例外：`overrides` 是 `Vec<(HarnessId, Override)>`，不是 map。
+                if let Some((_, over)) = state.overrides.iter().find(|(h, _)| h.as_str() == id) {
+                    row.persona = over.persona.as_ref().map(|p| p.to_string());
+                    row.mode = over.mode;
+                }
                 harnesses.push(row);
             }
         }
@@ -433,6 +440,9 @@ impl eframe::App for MetisApp {
                 Screen::About => screens::about(self, ui),
             }
         });
+
+        // 详情浮层：盖在内容之上，独立于布局。
+        crate::screens::show_detail(self, ui.ctx());
 
         // 命令面板画在最上层（`Ctrl+K` 或顶栏入口唤起）。
         //

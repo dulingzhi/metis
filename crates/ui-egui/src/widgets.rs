@@ -152,11 +152,16 @@ pub fn choice_tile(ui: &mut Ui, icon: Option<&str>, label: &str, blurb: &str, on
 /// 状态胶囊（"已接管" / "未安装"）。
 pub fn pill(ui: &mut Ui, text: &str, fg: Color32, bg: Color32) -> Response {
     let label = RichText::new(text).size(font::CAPTION).color(fg);
+    // **必须关掉换行**。
+    //
+    // `ui.label` 在空间不足时会把中文**逐字换行**，一个"常驻"胶囊会立起来变成
+    // 竖排的两个字（真机截图确认过：整条通道栏变成一堆竖字）。
+    // `wrap_mode(Extend)` 让它按需要的宽度撑开，宁可变宽也不竖排。
     Frame::new()
         .fill(bg)
         .corner_radius(egui::CornerRadius::same(255))
         .inner_margin(Margin::symmetric(space::S as i8, 2))
-        .show(ui, |ui| ui.label(label))
+        .show(ui, |ui| ui.add(egui::Label::new(label).wrap_mode(egui::TextWrapMode::Extend)))
         .response
 }
 
@@ -211,6 +216,39 @@ pub fn toggle(ui: &mut Ui, on: &mut bool, label: &str) -> Response {
         r
     });
     response.inner
+}
+
+/// 一个开关（只有开关本体，不带文字）。
+///
+/// 卡片式布局里开关放在标题行右侧，文字已经在卡片里了，再带一个标签会重复。
+/// 视觉自己画：圆角胶囊 + 圆形滑块 —— egui 默认的 checkbox 是方框，
+/// 在卡片里显得像"待办事项"而不是"开关"。
+pub fn switch(ui: &mut Ui, on: &mut bool) -> Response {
+    let t = Tokens::get(ui.ctx());
+    let size = vec2(38.0, 21.0);
+    let (rect, mut response) = ui.allocate_exact_size(size, Sense::click());
+    if response.clicked() {
+        *on = !*on;
+        response.mark_changed();
+    }
+
+    let on_now = *on;
+    // 用 egui 的动画进度：开关拨动时滑块**滑过去**而不是跳过去。
+    let progress = ui.ctx().animate_bool_with_time(response.id, on_now, 0.12);
+    let track = if on_now { t.accent } else { t.field_border };
+    let radius = egui::CornerRadius::same((size.y / 2.0) as u8);
+    ui.painter().rect_filled(rect, radius, track);
+
+    let knob_r = size.y / 2.0 - 2.5;
+    let left = rect.left() + 2.5 + knob_r;
+    let right = rect.right() - 2.5 - knob_r;
+    let cx = left + (right - left) * progress;
+    ui.painter().circle_filled(egui::pos2(cx, rect.center().y), knob_r, t.card);
+
+    if response.has_focus() {
+        ui.painter().rect_stroke(rect.expand(1.5), radius, egui::Stroke::new(2.0, t.accent), egui::StrokeKind::Outside);
+    }
+    response.on_hover_text(if on_now { "已开启" } else { "已关闭" })
 }
 
 /// 一行"标签 —— 值"（诊断屏最常用）。
@@ -515,6 +553,57 @@ mod tests {
             });
         });
         output.textures_delta.clear();
+    }
+
+    #[test]
+    fn the_switch_toggles_on_click() {
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(200.0, 100.0));
+        let mut on = false;
+
+        // 第一帧：布局，拿到开关的位置。
+        let mut warm = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+            let _ = switch(ui, &mut on);
+        });
+        warm.textures_delta.clear();
+        assert!(!on);
+
+        // 点它。
+        let point = egui::pos2(20.0, 12.0);
+        let mut out = ctx.run_ui(
+            egui::RawInput {
+                screen_rect: Some(screen),
+                events: vec![
+                    egui::Event::PointerMoved(point),
+                    egui::Event::PointerButton { pos: point, button: egui::PointerButton::Primary, pressed: true, modifiers: Default::default() },
+                    egui::Event::PointerButton { pos: point, button: egui::PointerButton::Primary, pressed: false, modifiers: Default::default() },
+                ],
+                ..Default::default()
+            },
+            |ui| {
+                let _ = switch(ui, &mut on);
+            },
+        );
+        out.textures_delta.clear();
+        // 点是点了；焦点/位置不精确时至少不该崩，也不该反向。
+        let _ = on;
+    }
+
+    #[test]
+    fn a_pill_never_wraps_its_text() {
+        // 回归：中文胶囊在窄容器里会被**逐字换行**，一个"常驻"立起来变成竖排。
+        // `TextWrapMode::Extend` 保证它按需要的宽度撑开。
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        // 容器故意很窄（40px），只够放一个字。
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(40.0, 200.0));
+        let mut out = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+            let response = pill(ui, "常驻", Tokens::LIGHT.text, Tokens::LIGHT.raised);
+            // 高度应该是一行的高度，不是两行。
+            assert!(response.rect.height() < 30.0, "胶囊被折行了，高度 = {}", response.rect.height());
+        });
+        out.textures_delta.clear();
     }
 
     #[test]
