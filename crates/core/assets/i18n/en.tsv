@@ -1,0 +1,40 @@
+# Metis strings: en. Format: key<TAB>text. Lines starting with # are comments.
+# Run cargo xtask i18n after editing to check both tables have the same keys.
+state.status.title	Show status
+state.power.title	Toggle injection
+state.mode.title	Set mode
+persona.list.title	List personas
+persona.save.title	Save persona
+persona.use.title	Use persona
+persona.remove.title	Delete persona
+channel.arm.title	Enable channel
+channel.set.title	Set channels
+channel.clean.title	Revert everything
+channel.uninstall.title	Uninstall one agent
+config.apply.title	Apply changes
+config.revert.title	Revert changes
+harness.list.title	List agents
+harness.doctor.title	Check environment
+harness.launch.title	Launch agent
+harness.ask.title	Ask once
+harness.verify.title	Verify injection
+harness.verify-report.title	Read verification report
+metis.self-uninstall.title	Delete data directory
+metis.import-agent-purge.title	Import from agent-purge
+metis.import-personas.title	Import personas
+metis.update-check.title	Check for updates
+metis.journal.title	View change log
+metis.journal-prune.title	Prune change log
+armor.plan.title	Build injection plan
+armor.preflight.title	Preflight check
+armor.record.title	Record a measurement
+armor.judge.title	Summarise the matrix
+armor.adopt.title	Adopt the recommended mode
+metis.backups-usage.title	Show backup usage
+metis.backups-prune.title	Prune orphan backups
+project.add.title	Register a project directory
+project.remove.title	Remove a project directory
+project.list.title	List project directories
+config.sync.title	Sync targets
+channel.install.title	Enable resident channel
+channel.slash.title	Manage the /purge extension

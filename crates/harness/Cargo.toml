@@ -1,0 +1,22 @@
+[package]
+name = "metis-harness"
+description = "Metis 的执行器适配层：探测、能力表、启动参数"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+metis-paths = { workspace = true }
+metis-process = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+toml = { workspace = true }

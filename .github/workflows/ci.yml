@@ -1,0 +1,145 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# 同一分支的新提交取消旧运行：省额度，也让"最新一次"的结论更可信。
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # 让 rustc 的警告变成 CI 上的注解，而不是埋在日志里。
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # ── 门禁：分层、文档、密钥、补救建议、i18n ────────────────
+  #
+  # 这些是**秒级**检查，先跑：一条不合规就没必要浪费十几分钟编译整个工作区。
+  gates:
+    name: 门禁
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: gates
+      # xtask 只依赖标准库的一小部分，但它是 cargo 子命令，要编译一次。
+      - run: cargo xtask layers
+      - run: cargo xtask docs
+      - run: cargo xtask secrets
+      - run: cargo xtask remediation
+      - run: cargo xtask i18n
+
+  fmt:
+    name: 格式
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  clippy:
+    name: Clippy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      # 装了 Linux 上 build eframe/egui 需要的系统库。
+      - name: 装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev \
+            libgl1-mesa-dev libssl-dev pkg-config
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+  test:
+    name: 测试（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 装系统依赖（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev \
+            libgl1-mesa-dev libssl-dev pkg-config
+      # 快照测试需要 GPU；CI 的 runner 没有显示设备，而且
+      # `egui_kittest` 在没有设备时是**永久挂起**而不是失败
+      # （docs/PITFALLS.md G3）。所以这里显式跳过。
+      - run: cargo test --workspace
+        env:
+          METIS_SKIP_SNAPSHOT: "1"
+
+  # ── 覆盖率 ────────────────────────────────────────────────
+  coverage:
+    name: 覆盖率
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: llvm-tools-preview
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: coverage
+      - name: 装系统依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev \
+            libgl1-mesa-dev libssl-dev pkg-config
+      - run: cargo install cargo-llvm-cov --locked || true
+      - run: cargo xtask coverage
+        env:
+          METIS_SKIP_SNAPSHOT: "1"
+
+  # ── 跨平台构建检查 ────────────────────────────────────────
+  #
+  # 只为**证明能编译**，不产出发布物 —— 发布物由 release.yml 负责。
+  # 分开放的好处：PR 上就能发现"Windows 能编译、macOS 不行"这类问题。
+  build:
+    name: 构建（${{ matrix.os }}）
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: 装系统依赖（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev \
+            libgl1-mesa-dev libssl-dev pkg-config
+      - run: cargo build --release --workspace
+      - name: 冒烟：CLI 能跑
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE=target/release/metis
+          [ "$RUNNER_OS" = "Windows" ] && EXE=target/release/metis.exe
+          "$EXE" --version
+          "$EXE" --help > /dev/null

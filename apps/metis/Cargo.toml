@@ -1,0 +1,33 @@
+[package]
+name = "metis"
+description = "Metis CLI：一份人设，统一管理多个 coding agent"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[[bin]]
+name = "metis"
+path = "src/main.rs"
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+metis-engine = { workspace = true }
+metis-harness = { workspace = true }
+metis-paths = { workspace = true }
+metis-persona = { workspace = true }
+metis-fs = { workspace = true }
+clap = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+metis-testkit = { workspace = true }
+tempfile = { workspace = true }
+assert_cmd = { workspace = true }
+predicates = { workspace = true }
+
+[target.'cfg(windows)'.build-dependencies]
+winresource = { workspace = true }

@@ -1,0 +1,18 @@
+# Metis 的 clippy 配置。
+# 测试代码里允许 unwrap / expect / panic / 索引：测试失败就该直接炸，不需要优雅降级。
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-panic-in-tests = true
+allow-indexing-slicing-in-tests = true
+allow-dbg-in-tests = true
+
+# 跨进程/跨线程契约一律走 metis-fs 的控制锁，不用裸 std Mutex。
+# 见 AGENTS.md 铁律 10。
+disallowed-types = [
+    { path = "std::sync::Mutex", reason = "用 metis-fs 的控制锁，或说明为什么这里必须是进程内锁" },
+]
+
+# 外部程序只有一个入口（AGENTS.md 铁律 11）。
+disallowed-methods = [
+    { path = "std::process::Command::new", reason = "外部命令必须经由 metis-process" },
+]

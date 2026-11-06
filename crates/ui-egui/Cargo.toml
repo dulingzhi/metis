@@ -1,0 +1,30 @@
+[package]
+name = "metis-ui-egui"
+description = "Metis 的 egui 界面：主题 token、屏幕、无头可测的纯函数模型"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+metis-engine = { workspace = true }
+metis-harness = { workspace = true }
+metis-persona = { workspace = true }
+metis-paths = { workspace = true }
+egui = { workspace = true }
+egui_extras = { workspace = true, features = ["svg"] }
+eframe = { workspace = true, features = ["default_fonts", "wgpu", "accesskit", "links"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+metis-testkit = { workspace = true }
+tempfile = { workspace = true }
+uuid = { workspace = true }
+egui_kittest = { workspace = true, features = ["wgpu", "eframe"] }
+eframe = { workspace = true }

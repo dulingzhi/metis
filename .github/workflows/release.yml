@@ -1,0 +1,203 @@
+name: 发布
+
+# 只在打 tag 时触发。手工触发用于"补发"或"重跑失败的那一次"。
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v），例如 0.1.0"
+        required: true
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  # ── 前置：版本一致性 ──────────────────────────────────────
+  #
+  # tag、Cargo.toml、二进制自报版本三者必须一致。
+  # 不一致就不要往下走 —— 一个版本号错的发布物比没有发布物更糟。
+  verify-version:
+    name: 校验版本
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: v
+        run: |
+          set -euo pipefail
+          CARGO_VERSION=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          echo "Cargo.toml 版本：$CARGO_VERSION"
+          if [ "${{ github.event_name }}" = "push" ]; then
+            TAG_VERSION="${GITHUB_REF_NAME#v}"
+            echo "tag 版本：$TAG_VERSION"
+            if [ "$CARGO_VERSION" != "$TAG_VERSION" ]; then
+              echo "::error::tag（$TAG_VERSION）与 Cargo.toml（$CARGO_VERSION）不一致"
+              exit 1
+            fi
+          else
+            INPUT="${{ github.event.inputs.version }}"
+            if [ "$CARGO_VERSION" != "$INPUT" ]; then
+              echo "::error::输入版本（$INPUT）与 Cargo.toml（$CARGO_VERSION）不一致"
+              exit 1
+            fi
+          fi
+          echo "version=$CARGO_VERSION" >> "$GITHUB_OUTPUT"
+
+  # ── 构建各平台产物 ────────────────────────────────────────
+  build:
+    name: 构建（${{ matrix.target }}）
+    needs: verify-version
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: windows-x64
+          - os: ubuntu-latest
+            target: linux-x64
+          - os: macos-latest
+            target: macos-arm64
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      - name: 装系统依赖（Linux）
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgtk-3-dev libxkbcommon-dev libwayland-dev libx11-dev \
+            libgl1-mesa-dev libssl-dev pkg-config zip
+
+      - name: 构建
+        run: cargo build --release -p metis -p metis-gui
+
+      # **打包前冒烟**：一个打不开的二进制不该进发布物。
+      - name: 冒烟
+        shell: bash
+        run: |
+          set -euo pipefail
+          EXE=target/release/metis
+          [ "$RUNNER_OS" = "Windows" ] && EXE=target/release/metis.exe
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          ACTUAL=$("$EXE" --version)
+          echo "$ACTUAL"
+          echo "$ACTUAL" | grep -q "$VERSION" || { echo "::error::版本不一致"; exit 1; }
+
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: pwsh scripts/package.ps1 -Version "${{ needs.verify-version.outputs.version }}" -NoBuild
+
+      - name: 打包（Unix）
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          NAME="metis-${VERSION}-${{ matrix.target }}"
+          mkdir -p "dist/$NAME"
+          cp target/release/metis "dist/$NAME/"
+          cp target/release/metis-gui "dist/$NAME/"
+          cp LICENSE-MIT LICENSE-APACHE README.md "dist/$NAME/"
+          chmod +x "dist/$NAME/metis" "dist/$NAME/metis-gui"
+          cd dist
+          tar czf "$NAME.tar.gz" "$NAME"
+          rm -rf "$NAME"
+          # 校验和必须是**相对文件名**，否则用户换个目录就验不了。
+          if command -v sha256sum > /dev/null; then
+            sha256sum "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+          else
+            shasum -a 256 "$NAME.tar.gz" > "$NAME.tar.gz.sha256"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: release-${{ matrix.target }}
+          path: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          if-no-files-found: error
+
+  # ── 建 Release 并上传 ─────────────────────────────────────
+  publish:
+    name: 发布
+    needs: [verify-version, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: 列出产物
+        run: ls -lh dist
+
+      # Release notes 从 tag 与 Cargo.toml 生成，**不手写**：
+      # 手写的 notes 迟早和实际产物对不上。
+      - name: 生成说明
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.verify-version.outputs.version }}"
+          cat > notes.md <<EOF
+          Metis ${VERSION} —— 一份人设，统一管理多个 coding agent。
+
+          ## 下载
+
+          | 平台 | 文件 |
+          |---|---|
+          | Windows x64 | \`metis-${VERSION}-windows-x64.zip\` |
+          | Linux x64 | \`metis-${VERSION}-linux-x64.tar.gz\` |
+          | macOS ARM64 | \`metis-${VERSION}-macos-arm64.tar.gz\` |
+
+          每个包都有对应的 \`.sha256\`。校验：
+
+          \`\`\`sh
+          sha256sum -c metis-${VERSION}-windows-x64.zip.sha256
+          \`\`\`
+
+          ## 用法
+
+          \`\`\`sh
+          metis --help            # 全部命令
+          metis doctor            # 看看本机装了哪些 agent
+          metis import dulingzhi/metis-personas   # 导入官方人设
+          metis-gui               # 图形控制台
+          \`\`\`
+
+          ## 卸载
+
+          **先 \`metis clean\` 撤销接管，再删目录。** 直接删目录不会撤销已写入的内容。
+
+          ## 许可
+
+          MIT OR Apache-2.0。
+          EOF
+
+      - name: 建 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: Metis ${{ needs.verify-version.outputs.version }}
+          body_path: notes.md
+          files: |
+            dist/*.zip
+            dist/*.zip.sha256
+            dist/*.tar.gz
+            dist/*.tar.gz.sha256
+          # 预发布：首个公开版本稳定之前，先标 pre-release 更诚实。
+          prerelease: ${{ contains(needs.verify-version.outputs.version, '-') }}
+          draft: false

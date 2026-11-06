@@ -1,0 +1,86 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "apps/*", "xtask"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT OR Apache-2.0"
+rust-version = "1.98"
+repository = "https://github.com/dulingzhi/metis"
+authors = ["Metis contributors"]
+
+[workspace.dependencies]
+# 内部 crate
+metis-core = { path = "crates/core" }
+metis-paths = { path = "crates/paths" }
+metis-fs = { path = "crates/fs" }
+metis-persona = { path = "crates/persona" }
+metis-harness = { path = "crates/harness" }
+metis-channel = { path = "crates/channel" }
+metis-process = { path = "crates/process" }
+metis-engine = { path = "crates/engine" }
+metis-ui-egui = { path = "crates/ui-egui" }
+metis-testkit = { path = "crates/testkit" }
+
+# 外部依赖
+thiserror = "2"
+serde = { version = "1", features = ["derive", "rc"] }
+serde_json = "1"
+schemars = "1"
+log = "0.4"
+toml = "0.9"
+sha2 = "0.10"
+hex = "0.4"
+uuid = { version = "1", features = ["v4", "serde"] }
+time = { version = "0.3", features = ["formatting", "parsing", "serde", "macros"] }
+clap = { version = "4", features = ["derive", "env"] }
+anyhow = "1"
+dirs = "6"
+ureq = "3"
+# 只在 Windows 上把图标与版本信息嵌进 exe（其他平台不编译）。
+winresource = "0.1"
+flate2 = "1"
+tar = "0.4"
+
+# 进程：跨平台进程组 / Job Object / drop 即杀
+process-wrap = { version = "10", default-features = false, features = ["std", "process-group", "job-object", "kill-on-drop", "creation-flags"] }
+
+# 界面
+eframe = { version = "0.36", default-features = false }
+egui = "0.36"
+egui_extras = { version = "0.36", default-features = false }
+egui_kittest = { version = "0.36" }
+rfd = "0.17"
+
+# 测试
+tempfile = "3"
+assert_cmd = "2"
+predicates = "3"
+walkdir = "2"
+regex = "1"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_debug_implementations = "warn"
+
+[workspace.lints.clippy]
+dbg_macro = "warn"
+todo = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+[profile.dev.package."*"]
+opt-level = 2
+
+[profile.dev]
+opt-level = 1
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+# 去掉调试符号：发布产物不需要它，能省掉一大截体积。
+strip = true
+# 体积优先：出错时 panic 走 abort，不展开栈（本项目的铁律是永不 panic，
+# 真触发了也只需要错误信息，不需要栈回溯）。
+panic = "abort"

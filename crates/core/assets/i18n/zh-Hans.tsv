@@ -1,0 +1,40 @@
+# Metis 文案表：zh-Hans。格式：键<TAB>文案。# 开头为注释。
+# 改完请跑 cargo xtask i18n 校验两张表键一致。
+state.status.title	查看状态
+state.power.title	开关注入
+state.mode.title	设定模式
+persona.list.title	列出人设
+persona.save.title	保存人设
+persona.use.title	选用人设
+persona.remove.title	删除人设
+channel.arm.title	开启通道
+channel.set.title	设置通道
+channel.clean.title	撤回接管
+channel.uninstall.title	卸载某家
+config.apply.title	应用变更
+config.revert.title	撤销变更
+harness.list.title	列出执行器
+harness.doctor.title	检查环境
+harness.launch.title	启动执行器
+harness.ask.title	一次性提问
+harness.verify.title	实测验证
+harness.verify-report.title	读取验证报告
+metis.self-uninstall.title	删除数据目录
+metis.import-agent-purge.title	从 agent-purge 导入
+metis.import-personas.title	导入人设
+metis.update-check.title	检查更新
+metis.journal.title	查看变更日志
+metis.journal-prune.title	裁剪变更日志
+armor.plan.title	生成注入策略
+armor.preflight.title	注入前预检
+armor.record.title	记录实测结果
+armor.judge.title	汇总注入矩阵
+armor.adopt.title	按建议设置模式
+metis.backups-usage.title	查看备份占用
+metis.backups-prune.title	清理无用备份
+project.add.title	登记项目目录
+project.remove.title	摘除项目目录
+project.list.title	列出项目目录
+config.sync.title	刷新落点
+channel.install.title	开启常驻通道
+channel.slash.title	管理 /purge 扩展

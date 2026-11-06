@@ -1,0 +1,23 @@
+[package]
+name = "metis-channel"
+description = "Metis 的四条通道：install / shim / slash / project 的 plan/apply/revert/status"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+metis-fs = { workspace = true }
+metis-harness = { workspace = true }
+metis-paths = { workspace = true }
+metis-persona = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

@@ -1,0 +1,18 @@
+[package]
+name = "metis-paths"
+description = "Metis 的路径解析：数据目录、各执行器主目录、shim 目录；根可注入"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+serde = { workspace = true }
+dirs = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

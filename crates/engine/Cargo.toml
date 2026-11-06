@@ -1,0 +1,32 @@
+[package]
+name = "metis-engine"
+description = "Metis 的引擎：state、激活、apply 编排、命令注册表"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+metis-fs = { workspace = true }
+metis-harness = { workspace = true }
+metis-paths = { workspace = true }
+metis-persona = { workspace = true }
+metis-channel = { workspace = true }
+metis-process = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+uuid = { workspace = true }
+time = { workspace = true }
+log = { workspace = true }
+dirs = { workspace = true }
+ureq = { workspace = true }
+flate2 = { workspace = true }
+tar = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

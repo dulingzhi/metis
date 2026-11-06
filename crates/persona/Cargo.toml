@@ -1,0 +1,21 @@
+[package]
+name = "metis-persona"
+description = "Metis 的人设库：front-matter 解析、列表、导入、内置模板"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish = false
+
+[lints]
+workspace = true
+
+[dependencies]
+metis-core = { workspace = true }
+metis-fs = { workspace = true }
+metis-paths = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+log = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
