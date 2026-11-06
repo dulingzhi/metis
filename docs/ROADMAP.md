@@ -126,7 +126,9 @@ M0 阶段：**只有文档**。任何"已实现"的说法都必须能在 `STATUS
 - [x] M7.2 便携包：`scripts/package.ps1` → zip + SHA256，包内说明写清"先 clean 再删目录"。**安装器未做**（便携包不需要管理员权限，等有用户要求再说）
 - [x] M7.3 版本一致性：`Cargo.toml` 是唯一真相；`xtask version` 读它，`package.ps1` 打包前校验 exe 自报版本，`release.yml` 校验 tag 与它一致
 - [x] M7.4 发布工作流：`.github/workflows/release.yml`（tag 触发，校验 tag ≡ Cargo.toml ≡ 二进制版本，三平台产物 + SHA256 + Release notes）
-- [ ] M7.5 首个公开版本
+- [x] M7.5 首个公开版本：**v0.1.0 已发布** —— https://github.com/dulingzhi/metis/releases/tag/v0.1.0
+  - Windows x64 zip 8.93MB / Linux x64 tar.gz 10.43MB / macOS ARM64 tar.gz 7.67MB
+  - 每个都有 `.sha256`；已实测下载 → 校验 → 解压 → `metis --version`
 
 ## M9 GUI 重构（借鉴 craft-anything 的设计系统）— owner: maintainers
 
