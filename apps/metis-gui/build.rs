@@ -6,19 +6,24 @@
 //!
 //! **只在 Windows 上跑**：其他平台没有资源段，图标由打包流程处理
 //! （macOS 用 `.app` 的 `Info.plist` + `.icns`，Linux 用 `.desktop`）。
-//!
-//! 产物不落盘到仓库：`OUT_DIR` 里临时生成，`cargo clean` 就没了。
 
 fn main() {
-    // 只在 Windows 上做；其他平台什么都不做。
-    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
-        return;
-    }
-
     // 改图标要能触发重新编译，否则换了图看不到变化。
     println!("cargo:rerun-if-changed=../../assets/app-icon.ico");
     println!("cargo:rerun-if-changed=build.rs");
 
+    // **整个 Windows 分支必须 `#[cfg]` 掉**。
+    //
+    // `winresource` 在 Cargo.toml 里是 `[target.'cfg(windows)'.build-dependencies]`，
+    // 所以在 Linux/macOS 上它**根本不存在**。直接 `use` 会让 build script 编译失败
+    // （`cannot find module or crate winresource`）—— CI 的三个平台因此只有
+    // Windows 能过。这是第一次跑 CI 才发现的。
+    #[cfg(windows)]
+    embed_windows_resources();
+}
+
+#[cfg(windows)]
+fn embed_windows_resources() {
     // 版本从 Cargo.toml 来，**不要在别处再写一遍** ——
     // 两处写版本必然有一天不一致（`M7.3` 就是为此存在的）。
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".to_owned());
