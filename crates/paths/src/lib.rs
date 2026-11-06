@@ -316,22 +316,44 @@ pub fn destructive_gate(home: &Path, home_dir: Option<&Path>, temp_dir: Option<&
 mod tests {
     use super::*;
 
+    /// 一个绝对路径的"假主目录"。
+    ///
+    /// **不能用 Windows 字面量**：在 Linux/macOS 上反斜杠只是普通字符，
+    /// `Path::new("C:\\Users\\example")` 是一个**相对路径**（单个文件名），
+    /// 于是所有依赖 `parent()`/`components()`/`starts_with()` 的断言全部失真。
+    /// CI 的 Linux 测试就是这么红的。
     fn fake_home() -> PathBuf {
-        PathBuf::from("C:\\Users\\example")
+        if cfg!(windows) { PathBuf::from("C:\\Users\\example") } else { PathBuf::from("/home/example") }
+    }
+
+    /// 平台无关的绝对路径构造器：`abs("data", "metis")`
+    /// → Windows `D:\data\metis`，Unix `/data/metis`。
+    fn abs(parts: &[&str]) -> PathBuf {
+        let mut out = if cfg!(windows) { PathBuf::from("D:\\") } else { PathBuf::from("/") };
+        for part in parts {
+            out.push(part);
+        }
+        out
     }
 
     #[test]
     fn explicit_home_wins_over_default() {
+        // **不能用 Windows 字面量路径**：反斜杠在 Linux/macOS 上只是普通字符，
+        // 整串会变成一个文件名，`Path::new("D:\\data\\metis")` 与解析出来的
+        // 绝对路径永远不相等（CI 的 Linux 测试因此全红）。
+        // 用绝对路径构造，让两个平台都想同。
+        let explicit = if cfg!(windows) { PathBuf::from("D:\\data\\metis") } else { PathBuf::from("/data/metis") };
+        let cwd = if cfg!(windows) { PathBuf::from("D:\\work") } else { PathBuf::from("/work") };
         let paths = Paths::from_env_with(
             |key| match key {
-                ENV_HOME => Some("D:\\data\\metis".to_owned()),
+                ENV_HOME => Some(explicit.display().to_string()),
                 _ => None,
             },
             Some(fake_home()),
-            Some(PathBuf::from("D:\\work")),
+            Some(cwd),
         )
         .expect("paths");
-        assert_eq!(paths.home(), Path::new("D:\\data\\metis"));
+        assert_eq!(paths.home(), explicit.as_path());
     }
 
     #[test]
@@ -394,7 +416,7 @@ mod tests {
     #[test]
     fn journal_dir_can_be_overridden() {
         let paths = Paths::with_home("D:\\ap").with_journal_dir("D:\\tmp\\journals");
-        assert_eq!(paths.restore_journal_dir(), Path::new("D:\\tmp\\journals"));
+        assert_eq!(paths.restore_journal_dir(), abs(&["tmp", "journals"]));
     }
 
     #[test]
@@ -415,9 +437,11 @@ mod tests {
     #[test]
     fn harness_home_honours_env_override() {
         let harness = HarnessId::parse("codex").expect("id");
-        let paths = Paths::with_home("D:\\ap");
-        let home = paths.harness_home(&harness, |key| (key == "CODEX_HOME").then(|| "E:\\codex".to_owned()), Path::new("C:\\Users\\example")).expect("home");
-        assert_eq!(home, Path::new("E:\\codex"));
+        let paths = Paths::with_home(abs(&["ap"]));
+        // 覆盖值要与默认根**不同**，才能证明"覆盖生效了"而不是"恰好相等"。
+        let explicit = if cfg!(windows) { PathBuf::from("E:\\codex") } else { PathBuf::from("/opt/codex") };
+        let home = paths.harness_home(&harness, |key| (key == "CODEX_HOME").then(|| explicit.display().to_string()), &fake_home()).expect("home");
+        assert_eq!(home, explicit);
     }
 
     #[test]
@@ -449,7 +473,7 @@ mod tests {
                 Path::new("C:\\Users\\example"),
             )
             .expect("home");
-        assert_eq!(home, Path::new("D:\\xdg\\opencode"), "XDG 之下还要拼一级");
+        assert_eq!(home, abs(&["xdg", "opencode"]), "XDG 之下还要拼一级");
     }
 
     #[test]
@@ -459,7 +483,7 @@ mod tests {
         let home = paths
             .harness_home(&HarnessId::parse("codex").expect("id"), |key| (key == "CODEX_HOME").then(|| "D:\\codex".to_owned()), Path::new("C:\\Users\\example"))
             .expect("home");
-        assert_eq!(home, Path::new("D:\\codex"));
+        assert_eq!(home, abs(&["codex"]));
     }
 
     #[test]
@@ -467,7 +491,7 @@ mod tests {
         // 这一条保护的是"测试不碰真实用户目录"：没有它，apply 的测试会往 ~/.pi 里写东西。
         let paths = Paths::with_home("D:\\ap").with_harness_root("D:\\fake-homes");
         let home = paths.harness_home(&HarnessId::parse("codex").expect("id"), |_| None, Path::new("C:\\Users\\example")).expect("home");
-        assert_eq!(home, Path::new("D:\\fake-homes\\codex"));
+        assert_eq!(home, abs(&["fake-homes", "codex"]), "harness root 覆盖之后应挂在新根下");
         assert!(!home.starts_with("C:\\Users\\example"), "绝不能落到真实主目录");
     }
 
@@ -479,14 +503,16 @@ mod tests {
 
     #[test]
     fn gate_refuses_root_and_home_and_temp() {
-        let temp = Path::new("D:\\tmp");
-        let home = Path::new("C:\\Users\\example");
+        let temp = &abs(&["tmp"]);
+        let home = &fake_home();
 
-        assert_eq!(destructive_gate(Path::new("D:\\"), Some(home), Some(temp), None).err().map(|e| e.kind()), Some(ErrorKind::Refused), "盘符根必须拒绝");
+        // 平台无关的"根"：Windows 是 `D:\`，Unix 是 `/`。
+        let root = if cfg!(windows) { Path::new("D:\\") } else { Path::new("/") };
+        assert_eq!(destructive_gate(root, Some(home), Some(temp), None).err().map(|e| e.kind()), Some(ErrorKind::Refused), "根必须拒绝");
         assert_eq!(destructive_gate(home, Some(home), Some(temp), None).err().map(|e| e.kind()), Some(ErrorKind::Refused), "主目录本身必须拒绝");
         assert_eq!(destructive_gate(temp, Some(home), Some(temp), None).err().map(|e| e.kind()), Some(ErrorKind::Refused), "临时目录本身必须拒绝");
         assert_eq!(
-            destructive_gate(Path::new("C:\\Users"), Some(home), Some(temp), None).err().map(|e| e.kind()),
+            destructive_gate(home.parent().unwrap_or(home), Some(home), Some(temp), None).err().map(|e| e.kind()),
             Some(ErrorKind::Refused),
             "主目录的上级必须拒绝"
         );
@@ -494,26 +520,24 @@ mod tests {
 
     #[test]
     fn gate_refuses_cwd_inside_home() {
-        let home = Path::new("D:\\ap");
-        let result = destructive_gate(home, None, None, Some(Path::new("D:\\ap\\sub")));
+        let home = &fake_home().join("ap");
+        let inside = &home.join("sub");
+        let result = destructive_gate(home, None, None, Some(inside));
         assert_eq!(result.err().map(|e| e.kind()), Some(ErrorKind::Refused));
     }
 
     #[test]
     fn gate_allows_a_sane_home() {
-        let result = destructive_gate(
-            Path::new("C:\\Users\\example\\.metis"),
-            Some(Path::new("C:\\Users\\example")),
-            Some(Path::new("D:\\tmp")),
-            Some(Path::new("D:\\work\\project")),
-        );
+        let base = fake_home();
+        let result = destructive_gate(&base.join(".metis"), Some(&base), Some(&std::env::temp_dir()), Some(&base.join("work").join("project")));
         assert!(result.is_ok(), "正常的数据目录必须放行");
     }
 
     #[test]
     fn gate_error_explains_which_rule_was_hit() {
-        let error = destructive_gate(Path::new("C:\\"), None, None, None).expect_err("should refuse");
+        let root = if cfg!(windows) { Path::new("C:\\") } else { Path::new("/") };
+        let error = destructive_gate(root, None, None, None).expect_err("should refuse");
         assert!(error.remediation().is_some());
-        assert!(error.message().contains("盘符根"), "应说清命中了哪一条：{}", error.message());
+        assert!(error.message().contains("根"), "应说清命中了哪一条：{}", error.message());
     }
 }

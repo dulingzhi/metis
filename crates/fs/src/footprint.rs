@@ -287,12 +287,23 @@ mod tests {
         assert!(result.is_err(), "没有 harness 的足迹必须被拒绝");
     }
 
+    /// 平台无关的绝对路径：测试里**不要用 Windows 字面量**，
+    /// 反斜杠在 Unix 上只是普通字符（CI 的 Linux 测试踩过）。
+    fn abs(parts: &[&str]) -> PathBuf {
+        let mut out = if cfg!(windows) { PathBuf::from("D:\\") } else { PathBuf::from("/") };
+        for part in parts {
+            out.push(part);
+        }
+        out
+    }
+
     #[test]
     fn cancel_by_location_only_touches_that_owner() {
         let dir = tempfile::tempdir().expect("tempdir");
-        record(dir.path(), entry("D:\\a\\b.txt", "codex", "install")).expect("1");
-        record(dir.path(), entry("D:\\a\\b.txt", "codex", "slash")).expect("2");
-        let removed = cancel(dir.path(), CancelKey::Location { path: Path::new("D:\\a\\b.txt"), harness: "codex", channel: "install" }).expect("cancel");
+        let target = abs(&["a", "b.txt"]);
+        record(dir.path(), entry(&target.display().to_string(), "codex", "install")).expect("1");
+        record(dir.path(), entry(&target.display().to_string(), "codex", "slash")).expect("2");
+        let removed = cancel(dir.path(), CancelKey::Location { path: &target, harness: "codex", channel: "install" }).expect("cancel");
         assert!(removed);
         let entries = load(dir.path()).expect("load");
         assert_eq!(entries.len(), 1);
@@ -346,9 +357,10 @@ mod tests {
     #[test]
     fn find_at_matches_by_canonical_path() {
         let dir = tempfile::tempdir().expect("tempdir");
-        record(dir.path(), entry("D:\\a\\b.txt", "codex", "install")).expect("record");
-        assert!(find_at(dir.path(), Path::new("D:\\a\\b.txt")).expect("find").is_some());
-        assert!(find_at(dir.path(), Path::new("D:\\a\\other.txt")).expect("find").is_none());
+        let target = abs(&["a", "b.txt"]);
+        record(dir.path(), entry(&target.display().to_string(), "codex", "install")).expect("record");
+        assert!(find_at(dir.path(), &target).expect("find").is_some());
+        assert!(find_at(dir.path(), &abs(&["a", "other.txt"])).expect("find").is_none());
     }
 
     #[test]
