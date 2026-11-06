@@ -122,10 +122,10 @@ M0 阶段：**只有文档**。任何"已实现"的说法都必须能在 `STATUS
 
 ## M7 打包与发布 — owner: stabilize
 
-- [ ] M7.1 应用图标与 `VERSIONINFO` / bundle id（Windows / macOS / Linux）
-- [ ] M7.2 Windows 安装器与便携包；卸载时先撤销接管
-- [ ] M7.3 版本一致性：`Cargo.toml`、`--version`、安装器、发布说明。已做：`xtask version`、CLI/GUI 的 `--version`（都有测试）
-- [ ] M7.4 发布工作流与校验和
+- [x] M7.1 应用图标与 `VERSIONINFO`：`scripts/gen-icon.py` 程序化生成（1024 PNG + 多尺寸 ICO），两个 exe 都用 `winresource` 嵌入产品名/版本/公司/许可。**macOS bundle id 未做**（没在 macOS 上验证过）
+- [x] M7.2 便携包：`scripts/package.ps1` → zip + SHA256，包内说明写清"先 clean 再删目录"。**安装器未做**（便携包不需要管理员权限，等有用户要求再说）
+- [x] M7.3 版本一致性：`Cargo.toml` 是唯一真相；`xtask version` 读它，`package.ps1` 打包前校验 exe 自报版本，`release.yml` 校验 tag 与它一致
+- [x] M7.4 发布工作流：`.github/workflows/release.yml`（tag 触发，校验 tag ≡ Cargo.toml ≡ 二进制版本，三平台产物 + SHA256 + Release notes）
 - [ ] M7.5 首个公开版本
 
 ## M9 GUI 重构（借鉴 craft-anything 的设计系统）— owner: maintainers
