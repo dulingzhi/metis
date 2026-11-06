@@ -357,7 +357,13 @@ mod tests {
         let profile = harness_home.join("profiles").join("desktop");
         let outcome = install(&home, &id("dsh"), &profile).expect("install");
         let rendered = outcome.file.display().to_string();
-        assert!(!rendered.contains("node_modules/metis"), "路径里不该有正斜杠混用：{rendered}");
+        // **断言的是"分隔符与平台一致"，不是"不含正斜杠"。**
+        //
+        // 原来写的是 `!rendered.contains("node_modules/metis")` —— 这在 Windows 上
+        // 成立（分隔符是 `\`），在 Linux/macOS 上**必然失败**，因为那里的分隔符
+        // 本来就是 `/`。CI 的 Linux 测试第一次跑就红了。
+        let expected = std::path::Path::new("node_modules").join("metis").display().to_string();
+        assert!(rendered.contains(&expected), "落盘路径应使用平台分隔符（期望含 {expected}）：{rendered}");
         assert!(outcome.file.is_file());
     }
 
