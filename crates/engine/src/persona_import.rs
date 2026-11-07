@@ -98,13 +98,12 @@ pub fn import_dir(paths: &metis_paths::Paths, source: &Path, options: &ImportOpt
     // 2. 不排除 `README.md` → 它会被当成一份 id 叫 `README` 的人设导进去，
     //    用户 `metis ls` 会看到一份垃圾。
     let root = if source.join("personas").is_dir() { source.join("personas") } else { source.to_path_buf() };
-    let mut files: Vec<PathBuf> = std::fs::read_dir(&root)
-        .map_err(|error| MetisError::from(error).with_detail(root.display().to_string()))?
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|e| e.to_str()) == Some("md"))
-        .filter(|path| !is_documentation_file(path))
-        .collect();
+    // **递归收集**（有深度上限）。
+    //
+    // 第三方人设库的布局五花八门：`characters/`、`presets/`、`roles/` 都见过。
+    // 只读一层会把它们**整批漏掉**（实测：`characters/a.md` + `presets/b.md`
+    // 都没进来，只导入了根目录那一份）。
+    let mut files = collect_markdown(&root, MAX_IMPORT_DEPTH);
     files.sort();
 
     if files.is_empty() {
@@ -237,6 +236,47 @@ pub struct IndexEntry {
 /// 是不是"文档"而不是"人设"。
 ///
 /// 人设库仓库里一定会有 `README.md`、`CHANGELOG.md` 之类 —— 它们不是人设。
+/// 目录递归深度上限。
+///
+/// 深度不是越大越好：人设库通常 1~2 层；太深多半是 `node_modules` 或构建产物，
+/// 那里面成千上万个 `.md` 只会拖慢导入、污染人设库。
+const MAX_IMPORT_DEPTH: usize = 3;
+
+/// 递归收集 `.md`，跳过文档文件与明显的非人设目录。
+///
+/// 跳过的目录名：版本控制、依赖、构建产物、编辑器缓存 —— 它们不是人设，
+/// 但里面有大量 `.md`（README、CHANGELOG、依赖的文档）。
+fn collect_markdown(dir: &Path, depth: usize) -> Vec<PathBuf> {
+    let mut out = Vec::new();
+    if depth == 0 {
+        return out;
+    }
+    let Ok(entries) = std::fs::read_dir(dir) else { return out };
+    let mut subdirs = Vec::new();
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            let name = path.file_name().and_then(|n| n.to_str()).unwrap_or_default();
+            if !matches!(name, ".git" | "node_modules" | "target" | "dist" | ".github" | ".vscode" | ".idea" | "vendor") {
+                subdirs.push(path);
+            }
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            continue;
+        }
+        if is_documentation_file(&path) {
+            continue;
+        }
+        out.push(path);
+    }
+    subdirs.sort();
+    for sub in subdirs {
+        out.extend(collect_markdown(&sub, depth - 1));
+    }
+    out
+}
+
 fn is_documentation_file(path: &Path) -> bool {
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or_default().to_ascii_lowercase();
     matches!(stem.as_str(), "readme" | "license" | "licence" | "changelog" | "contributing" | "notice" | "authors" | "code_of_conduct" | "security")

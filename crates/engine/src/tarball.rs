@@ -146,14 +146,28 @@ fn is_wanted(relative: &str) -> bool {
     // 收两类：`personas/**` 与**仓库根目录的 `*.md`**。
     //
     // 很多第三方人设库就是把文件平铺在根目录（`ZiChuanLan/some-magic`：
-    // `dafeiyu.md` / `xiao­majiang.md` / `CTF.md`）。只认 `personas/` 会把它们**全漏掉**。
+    // `dafeiyu.md` / `xiaomajiang.md` / `CTF.md`）。只认 `personas/` 会把它们**全漏掉**。
+    //
+    // 根目录之外的其他子目录（`characters/`、`presets/`…）也收：
+    // 第三方布局五花八门，只认一种会漏。但**排除**明显的非人设目录
+    // （依赖、构建产物、版本控制），否则 `node_modules/**/*.md` 会灌进来。
     let under_personas = relative.starts_with("personas/");
     let at_root = !relative.contains('/');
-    if !under_personas && !at_root {
+    if !under_personas && !at_root && hits_ignored_dir(relative) {
+        return false;
+    }
+    // 深度上限：和本地导入一致（`MAX_IMPORT_DEPTH` 的语义）。
+    if relative.split('/').count() > 4 {
         return false;
     }
     let stem = relative.trim_end_matches(".md").rsplit('/').next().unwrap_or_default().to_ascii_lowercase();
     !is_documentation(&stem)
+}
+
+/// 路径里是否出现"不是人设"的目录。
+fn hits_ignored_dir(relative: &str) -> bool {
+    const IGNORED: &[&str] = &[".git", "node_modules", "target", "dist", "vendor", ".github", ".vscode", ".idea"];
+    relative.split('/').any(|part| IGNORED.contains(&part))
 }
 
 /// 是不是"文档"而不是"人设"。
@@ -169,7 +183,14 @@ fn is_documentation(stem: &str) -> bool {
 /// 规则：**有 `personas/` 目录就只用它**（那是明确的约定，根目录的 `.md`
 /// 多半是说明或配置）；否则用根目录的。
 fn pick_layout(mut collected: BTreeMap<String, String>) -> BTreeMap<String, String> {
-    if collected.keys().any(|k| k.starts_with("personas/")) {
+    // 有 `personas/` 就用它（那是明确约定）。
+    //
+    // 但**只有在根目录没有直接放人设时**才这么做：有些库既有 `personas/`
+    // 又在根目录放了几份，若一刀切丢掉根目录的会漏。
+    // 判据：根目录那份如果文档名都排除了还剩下东西，就两边都留。
+    let has_personas_dir = collected.keys().any(|k| k.starts_with("personas/"));
+    let has_root_md = collected.keys().any(|k| !k.contains('/'));
+    if has_personas_dir && !has_root_md {
         collected.retain(|k, _| k.starts_with("personas/"));
     }
     collected
@@ -261,22 +282,53 @@ mod tests {
     }
 
     #[test]
-    fn the_personas_directory_wins_over_the_root() {
-        // 两类都在时**只用 `personas/`** —— 那是明确的约定，根目录的 `.md`
-        // 多半是说明或配置，混进来会污染人设库。
-        let gz = make_tarball(&[("repo-main/NOTES.md", "随手记"), ("repo-main/personas/real.md", "真人设")]);
+    fn the_personas_directory_wins_when_the_root_has_no_personas() {
+        // `personas/` 是明确约定，用它。根目录只有文档时不该混进来。
+        let gz = make_tarball(&[("repo-main/README.md", "说明"), ("repo-main/personas/real.md", "真人设")]);
         let tarball = extract(&gz).expect("extract");
         assert_eq!(tarball.personas.len(), 1, "{:?}", tarball.personas.keys());
         assert!(tarball.personas.contains_key("personas/real.md"));
     }
 
     #[test]
-    fn nested_markdown_outside_personas_is_not_collected() {
-        // 只收根目录一层；`docs/*.md` 之类不该被当成人设。
-        let gz = make_tarball(&[("repo-main/docs/a.md", "文档"), ("repo-main/notes/b.md", "笔记"), ("repo-main/root.md", "根目录的")]);
+    fn a_mixed_layout_keeps_both_sides() {
+        // 既有人设目录又在根目录放了人设时，**两边都留**。
+        // 一刀切只留 `personas/` 会漏掉根目录那几份（第三方库常见这种混放）。
+        let gz = make_tarball(&[("repo-main/NOTES.md", "随手记"), ("repo-main/personas/real.md", "真人设")]);
+        let tarball = extract(&gz).expect("extract");
+        assert_eq!(tarball.personas.len(), 2, "{:?}", tarball.personas.keys());
+        assert!(tarball.personas.contains_key("NOTES.md"));
+        assert!(tarball.personas.contains_key("personas/real.md"));
+    }
+
+    #[test]
+    fn nested_personas_are_collected_but_ignored_dirs_are_not() {
+        // 第三方库的布局五花八门（`characters/`、`presets/`）—— 子目录也要收。
+        // 但依赖/构建产物目录必须排除，否则 `node_modules/**/*.md` 会灌进来。
+        let gz = make_tarball(&[
+            ("repo-main/characters/a.md", "甲"),
+            ("repo-main/presets/b.md", "乙"),
+            ("repo-main/root.md", "根"),
+            ("repo-main/node_modules/pkg/README.md", "依赖的文档"),
+            ("repo-main/target/doc/x.md", "构建产物"),
+            ("repo-main/README.md", "根说明"),
+        ]);
+        let tarball = extract(&gz).expect("extract");
+        assert_eq!(tarball.personas.len(), 3, "{:?}", tarball.personas.keys());
+        assert!(tarball.personas.contains_key("characters/a.md"));
+        assert!(tarball.personas.contains_key("presets/b.md"));
+        assert!(tarball.personas.contains_key("root.md"));
+        assert!(!tarball.personas.keys().any(|k| k.contains("node_modules")), "依赖目录不该被收");
+        assert!(!tarball.personas.keys().any(|k| k.contains("target")), "构建产物不该被收");
+    }
+
+    #[test]
+    fn very_deep_paths_are_ignored() {
+        // 深度上限：防止有人在很深的目录里放大量 `.md`。
+        let gz = make_tarball(&[("repo-main/a/b/c/d/e.md", "太深了"), ("repo-main/ok.md", "正常")]);
         let tarball = extract(&gz).expect("extract");
         assert_eq!(tarball.personas.len(), 1, "{:?}", tarball.personas.keys());
-        assert!(tarball.personas.contains_key("root.md"));
+        assert!(tarball.personas.contains_key("ok.md"));
     }
 
     #[test]
