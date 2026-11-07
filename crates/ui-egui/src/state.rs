@@ -101,6 +101,31 @@ pub struct UiState {
     pub palette: crate::palette::PaletteState,
 }
 
+/// 一个可选的导入源。
+///
+/// **数据而不是 if 链**（`AGENTS.md` 架构规则）：新增一个源只在这里加一行，
+/// UI 自动多一个快捷按钮，不需要改渲染代码。
+#[derive(Debug)]
+pub struct SourceSuggestion {
+    /// 仓库（`owner/repo`）。
+    pub repo: &'static str,
+    /// 按钮上的短名。
+    pub label: &'static str,
+    /// 悬停说明：它是什么、谁维护。
+    pub hint: &'static str,
+}
+
+/// 界面上给出的源清单。
+///
+/// 只放**明确知道来源**的仓库。第三方源列在这里是"方便用户选择"，
+/// 不表示 Metis 对其内容背书 —— `hint` 里要写清是谁的。
+pub const SOURCE_SUGGESTIONS: &[SourceSuggestion] = &[
+    SourceSuggestion { repo: OFFICIAL_SOURCE, label: "官方源", hint: "Metis 维护的起步人设（CC0）" },
+    SourceSuggestion {
+        repo: "ZiChuanLan/some-magic", label: "some-magic", hint: "第三方人设库（ZiChuanLan 维护，未声明许可；内容与 Metis 无关）"
+    },
+];
+
 /// 官方人设源的仓库地址。
 ///
 /// 这是**唯一**一处硬编码的源；改它等于改"点一下导入什么"。
@@ -270,5 +295,54 @@ mod tests {
     #[test]
     fn storage_key_is_stable() {
         assert_eq!(UiState::STORAGE_KEY, "metis-ui");
+    }
+}
+
+#[cfg(test)]
+mod source_tests {
+    use super::*;
+
+    #[test]
+    fn the_official_source_is_always_offered() {
+        // 官方源必须在清单里 —— 那是"点一下就能用"的默认路径。
+        assert!(SOURCE_SUGGESTIONS.iter().any(|s| s.repo == OFFICIAL_SOURCE), "官方源必须在快捷源里");
+    }
+
+    #[test]
+    fn every_suggestion_is_a_valid_repo_string() {
+        for source in SOURCE_SUGGESTIONS {
+            // `owner/repo`：恰好一个斜杠，两边都非空，不含空白。
+            assert_eq!(source.repo.matches('/').count(), 1, "{} 不是 owner/repo 形式", source.repo);
+            let (owner, repo) = source.repo.split_once('/').unwrap_or(("", ""));
+            assert!(!owner.is_empty() && !repo.is_empty(), "{} 的 owner/repo 不能为空", source.repo);
+            assert!(!source.repo.contains(char::is_whitespace), "{} 含空白", source.repo);
+        }
+    }
+
+    #[test]
+    fn every_suggestion_has_a_label_and_a_provenance_hint() {
+        for source in SOURCE_SUGGESTIONS {
+            assert!(!source.label.is_empty(), "{} 缺少按钮文字", source.repo);
+            // **hint 必须说明是谁的源**：第三方源列在界面上不等于 Metis 背书。
+            assert!(!source.hint.is_empty(), "{} 缺少说明", source.repo);
+        }
+    }
+
+    #[test]
+    fn third_party_sources_say_they_are_third_party() {
+        // 非官方源的说明里要能看出"不是我维护的"。
+        for source in SOURCE_SUGGESTIONS.iter().filter(|s| s.repo != OFFICIAL_SOURCE) {
+            let hint = source.hint;
+            let says_third_party = hint.contains("第三方") || hint.contains("未声明许可") || hint.contains("无关");
+            assert!(says_third_party, "{} 的说明没写清它是第三方：{hint}", source.repo);
+        }
+    }
+
+    #[test]
+    fn suggestions_are_unique() {
+        let mut seen = std::collections::BTreeSet::new();
+        for source in SOURCE_SUGGESTIONS {
+            assert!(seen.insert(source.repo), "{} 重复出现", source.repo);
+        }
     }
 }

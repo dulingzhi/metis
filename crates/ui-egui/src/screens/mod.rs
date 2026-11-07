@@ -700,6 +700,34 @@ fn import_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
         widgets::caption(ui, "填 `owner/repo`。只读；同名人设不会被覆盖，会标为「跳过」。");
         ui.add_space(space::S);
 
+        // ── 快捷源：点一下就填进输入框，不用记仓库名 ──
+        //
+        // 源清单在 `state::SOURCE_SUGGESTIONS` 里（数据，不是 if 链）：
+        // 新增一个源只加一行，这里自动多一个按钮。
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = space::XS;
+            ui.label(egui::RichText::new("常用：").size(font::CAPTION).color(t.text_faint));
+            for source in crate::state::SOURCE_SUGGESTIONS {
+                let selected = app.ui.import_source.trim() == source.repo;
+                let (fg, bg) = if selected { (t.on_accent, t.accent) } else { (t.text_dim, t.raised) };
+                // `pill` 画的是 `Label`，**无障碍树里是 statictext，点了不触发 `clicked()`**。
+                // 必须显式登记成按钮 —— 否则鼠标点得动、屏幕阅读器和 `agent-desktop`
+                // 都点不动（真机踩过：ref 显示 role=statictext，点击报"成功"但没反应）。
+                let response = widgets::pill(ui, source.label, fg, bg).interact(egui::Sense::click());
+                response.ctx.accesskit_node_builder(response.id, |node| {
+                    node.set_role(egui::accesskit::Role::Button);
+                    node.set_label(source.label);
+                    node.set_description(format!("{}：{}", source.repo, source.hint));
+                    node.add_action(egui::accesskit::Action::Click);
+                });
+                if response.clicked() {
+                    app.ui.import_source = source.repo.to_owned();
+                }
+                response.on_hover_text(format!("{}\n{}", source.repo, source.hint));
+            }
+        });
+        ui.add_space(space::S);
+
         // 输入框独占一行，按钮另起一行。
         //
         // 原本是"输入框 + 两个按钮"挤在一行，真机截图里按钮被挤出卡片外看不见 ——
