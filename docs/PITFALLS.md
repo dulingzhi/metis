@@ -1028,3 +1028,23 @@
 - **规则**：写进**用户可见内容**（尤其是给模型读的本地路径）之前，Windows 上统一成 `\`；
   路径本身仍然合法，但可读性和可粘贴性更好。
   对应测试：`display_path_uses_the_platform_separator`。
+
+### G85. 列表每行都有同名「详情」按钮 → `AMBIGUOUS_TARGET`
+- **现象**：真实窗口里点列表第一行的「详情」，`agent-desktop` 返回
+  `AMBIGUOUS_TARGET`；读屏用户听到的也是几十个一模一样的“详情”。
+- **原因**：可见文字相同，**无障碍名字**也相同；ref 无法唯一重识别。
+- **规则**：重复行里的操作控件必须把行标识写进 accessible name
+  （`详情：<名称>`），可见文字可以保持简短：
+  ```rust
+  let link = widgets::link(ui, "详情");
+  link.ctx.accesskit_node_builder(link.id, |node| node.set_label(format!("详情：{}", item.name)));
+  ```
+  对应实现：`screens::hub_card`；真实窗口验证通过。
+
+### G86. `#[serde(flatten)]` 加上同名字段 → 重复 JSON 键，反序列化必坏
+- **现象**：`HubDetail` 里 `item: HubSummary` 有 `source`（条目来源），外层又有一个
+  `source: DataSource`（网络/缓存）。序列化出两个 `"source"` 键，UI 用
+  `serde_json::from_value::<HubDetail>` 报 `expected value`。
+- **原因**：`flatten` 只摊平字段，不解决命名冲突；JSON 允许重复键，serde 的行为不可依赖。
+- **规则**：`flatten` 的外层字段**不能**和内层字段同名；用 `#[serde(rename = "dataSource")]`
+  区分，并加一条 **round-trip** 测试（`page_and_detail_round_trip_through_json`）钉住。

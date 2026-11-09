@@ -77,6 +77,7 @@ pub enum Screen { Console, Library, Diagnostics, About }
 | 列表 | 搜索框 + 人设卡片列表（名称、id、描述、当前使用标记、字数）；点击选中 | `#persona-search`、`#persona-list` |
 | 编辑器 | id（只读或受限编辑）、名称、描述、model/harness 标签、正文多行编辑 + 实时字数、`保存`、`删除` | `#edit-id`、`#edit-name`、`#edit-desc`、`#edit-body`、`#char-count`、`#save-persona`、`#delete-persona` |
 | 导入对话框 | 来源（本地目录 / GitHub `owner/repo`）、是否覆盖同名、进度与逐条结果、`开始导入`、`取消` | `#import-dialog`、`#import-source`、`#import-overwrite`、`#start-import` |
+| 远端人设库 | Hub 地址（持久化）、搜索 / 标签 / provider、`加载远端库` / `刷新`、分页（`上一页` / `第 N 页` / `下一页` / 每页条数）、条目列表（名称、版本、官方/校验徽标、下载数、`详情：<名称>`）；内联详情卡片（提示词、参考资料、关联技能勾选、`导入为`、`覆盖同名`、`追加 knowledge`、未校验二次确认、`导入` / `预览`） | `#hub-url`、`#hub-load`、`#hub-search`、`#hub-page-prev`、`#hub-page-next`、`#hub-detail`、`#hub-import` |
 | 更新对话框 | 当前版本 / 最新版本、变更日志、可复制的升级命令、GitHub 链接、`直接升级`（仅便携安装可用） | `#version-badge`、`#update-*` |
 
 规则：
@@ -85,6 +86,10 @@ pub enum Screen { Console, Library, Diagnostics, About }
 - `active` 是保留标识，不能作为人设名（保存时报错并指出）。
 - 保存保留表单未涉及的元数据（例如用 CLI 加的自定义键）。
 - `删除` 需要二次确认；`撤销接管` 不删人设，`删除数据` 才删，两者文案必须不同。
+- 远端 Hub 是**不可信输入**：`verified=false` 的条目必须勾选“我确认来源”才能导入；预览不受此限制。
+- 分页游标不透明，只提供上一页/下一页；最后一页正好满时下一页可能为空，要能回到上一页。
+- 关联技能默认全选，导入时落到 `~/.metis/skills/<slug>/`，本地路径写回人设正文。
+- 列表每行的「详情」按钮在无障碍树里必须带条目名（`详情：<名称>`），否则 `agent-desktop` 报 `AMBIGUOUS_TARGET`。
 
 ### 2.3 验证与诊断（Diagnostics）
 

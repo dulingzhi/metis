@@ -633,6 +633,9 @@ pub fn library(app: &mut MetisApp, ui: &mut Ui) {
         import_card(app, ui, &t);
         ui.add_space(space::L);
 
+        hub_card(app, ui, &t);
+        ui.add_space(space::L);
+
         widgets::card(&t).show(ui, |ui| {
             ui.horizontal(|ui| {
                 widgets::section_title(ui, "全部人设");
@@ -755,6 +758,317 @@ fn import_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     });
 }
 
+/// 远端人设库（worldd / KK Hub）。
+///
+/// 浏览、详情、导入都是后台任务；这里只读 `app.hub` 的快照，不在帧里联网。
+fn hub_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
+    let mut search = false;
+    widgets::card(t).show(ui, |ui| {
+        ui.horizontal(|ui| {
+            widgets::section_title(ui, "远端人设库");
+            widgets::pill(ui, "KK Hub", t.accent_ink, t.accent_soft);
+            if app.hub.stale {
+                widgets::pill(ui, "离线缓存", t.warning, t.raised);
+            }
+        });
+        widgets::caption(ui, "浏览 worldd 的 expert；导入只写本地，不会自动 apply。");
+        ui.add_space(space::S);
+
+        // 地址独占一行；按钮另起一行（PITFALLS G73：不要在 horizontal 里减常数算宽度）。
+        ui.add(
+            egui::TextEdit::singleline(&mut app.ui.hub_url)
+                .hint_text("https://… 或 …/hub")
+                .desired_width(f32::INFINITY)
+                .font(egui::FontId::new(font::BODY, fonts::body())),
+        );
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            let load = ui.add_enabled_ui(!app.hub.loading, |ui| widgets::secondary(ui, "加载远端库")).inner;
+            if load.clicked() {
+                app.spawn_hub_search();
+            }
+            let refresh = ui.add_enabled_ui(!app.hub.loading, |ui| widgets::secondary(ui, "刷新")).inner;
+            if refresh.clicked() {
+                app.spawn_hub_list(true);
+            }
+            if app.hub.loading {
+                widgets::working(ui, "正在加载…", None);
+            }
+        });
+        ui.add_space(space::S);
+
+        // 搜索词独占一行，筛选条件第二行 —— 窄窗口下不会互相挤出去。
+        let query_response = ui.add(
+            egui::TextEdit::singleline(&mut app.hub.query)
+                .hint_text("搜索名称 / 说明 / 标签")
+                .desired_width(f32::INFINITY)
+                .font(egui::FontId::new(font::BODY, fonts::body())),
+        );
+        let query_enter = query_response.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            ui.label(RichText::new("标签").size(font::CAPTION).color(t.text_faint));
+            ui.add(egui::TextEdit::singleline(&mut app.hub.tag).hint_text("review").desired_width(130.0));
+            ui.label(RichText::new("厂商").size(font::CAPTION).color(t.text_faint));
+            egui::ComboBox::from_id_salt("hub-provider").selected_text(provider_label(&app.hub.provider)).width(100.0).show_ui(ui, |ui| {
+                ui.selectable_value(&mut app.hub.provider, String::new(), "全部");
+                ui.selectable_value(&mut app.hub.provider, "claude".to_owned(), "claude");
+                ui.selectable_value(&mut app.hub.provider, "codex".to_owned(), "codex");
+                ui.selectable_value(&mut app.hub.provider, "deepseek".to_owned(), "deepseek");
+            });
+            if widgets::secondary(ui, "搜索").clicked() {
+                search = true;
+            }
+        });
+        if query_enter {
+            search = true;
+        }
+
+        ui.add_space(space::S);
+        if let Some(error) = app.hub.error.as_deref() {
+            ui.label(RichText::new(error).size(font::SMALL).color(t.danger));
+        }
+        if let Some(warning) = app.hub.warning.as_deref() {
+            ui.label(RichText::new(warning).size(font::CAPTION).color(t.warning));
+        }
+
+        if app.hub.items.is_empty() {
+            if app.hub.loading {
+                widgets::working(ui, "正在加载…", None);
+            } else if app.hub.page > 1 {
+                widgets::empty_state(ui, "search", "没有更多了", "回到上一页继续看。");
+            } else if app.hub.fetched_at > 0 {
+                widgets::empty_state(ui, "search", "没有匹配的条目", "换个关键词、标签或厂商试试。");
+            } else {
+                widgets::empty_state(ui, "globe", "还没有加载远端人设", "填好 Hub 地址后点「加载远端库」。");
+            }
+        } else {
+            let mut open: Option<String> = None;
+            for item in &app.hub.items {
+                let selected = app.hub.selected.as_deref() == Some(item.slug.as_str());
+                ui.horizontal(|ui| {
+                    let name = if item.official { format!("★ {}", item.name) } else { item.name.clone() };
+                    if ui.selectable_label(selected, RichText::new(name).size(font::BODY).color(t.text)).clicked() {
+                        open = Some(item.slug.clone());
+                    }
+                    ui.label(RichText::new(format!("v{}", item.version)).size(font::CAPTION).color(t.text_faint));
+                    if item.official {
+                        widgets::pill(ui, "官方", t.accent_ink, t.accent_soft);
+                    }
+                    if item.verified {
+                        widgets::pill(ui, "已校验", t.success, t.raised);
+                    } else {
+                        widgets::pill(ui, "未校验", t.danger, t.raised);
+                    }
+                    if item.downloads > 0 {
+                        ui.label(RichText::new(format!("↓{}", item.downloads)).size(font::CAPTION).color(t.text_faint));
+                    }
+                    // 每行都有同名「详情」按钮：无障碍树里必须带条目名，否则
+                    // `agent-desktop` 报 AMBIGUOUS_TARGET，读屏用户也分不清。
+                    let detail_link = widgets::link(ui, "详情");
+                    detail_link.ctx.accesskit_node_builder(detail_link.id, |node| {
+                        node.set_label(format!("详情：{}", item.name));
+                    });
+                    if detail_link.clicked() {
+                        open = Some(item.slug.clone());
+                    }
+                });
+                if !item.description.is_empty() {
+                    ui.label(RichText::new(&item.description).size(font::CAPTION).color(t.text_faint));
+                }
+                widgets::separator(ui);
+            }
+            if let Some(slug) = open {
+                app.spawn_hub_detail(slug, None);
+            }
+        }
+
+        // 分页：上一页 / 第 N 页 / 下一页 / 每页条数。
+        if !app.hub.items.is_empty() || app.hub.page > 1 {
+            ui.horizontal(|ui| {
+                let prev = ui.add_enabled_ui(app.hub.page > 1 && !app.hub.loading, |ui| widgets::secondary(ui, "上一页")).inner;
+                if prev.clicked() {
+                    app.spawn_hub_prev_page();
+                }
+                ui.label(RichText::new(format!("第 {} 页", app.hub.page)).size(font::SMALL).color(t.text_dim));
+                let next = ui.add_enabled_ui(app.hub.next_cursor.is_some() && !app.hub.loading, |ui| widgets::secondary(ui, "下一页")).inner;
+                if next.clicked() {
+                    app.spawn_hub_next_page();
+                }
+                let mut size = app.hub.page_size;
+                egui::ComboBox::from_id_salt("hub-page-size").selected_text(format!("每页 {size}")).width(90.0).show_ui(ui, |ui| {
+                    for option in [20_usize, 50, 100] {
+                        ui.selectable_value(&mut size, option, format!("每页 {option}"));
+                    }
+                });
+                if size != app.hub.page_size {
+                    app.hub.page_size = size;
+                    app.spawn_hub_search();
+                }
+            });
+        }
+    });
+
+    if search {
+        app.spawn_hub_search();
+    }
+    if app.hub.selected.is_some() {
+        ui.add_space(space::L);
+        widgets::card(t).show(ui, |ui| hub_detail_body(app, ui, t));
+    }
+}
+
+/// 远端 expert 的详情卡片（内联，不参与浮层布局）。
+fn hub_detail_body(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
+    if app.hub.detail_loading {
+        widgets::working(ui, "正在加载详情…", None);
+        return;
+    }
+    if let Some(error) = app.hub.detail_error.as_deref() {
+        ui.label(RichText::new(error).size(font::SMALL).color(t.danger));
+        if widgets::secondary(ui, "关闭").clicked() {
+            app.hub.selected = None;
+            app.hub.detail = None;
+        }
+        return;
+    }
+    let Some(detail) = app.hub.detail.clone() else { return };
+
+    let mut close = false;
+    ui.horizontal_wrapped(|ui| {
+        widgets::section_title(ui, &detail.item.name);
+        ui.label(RichText::new(format!("v{}", detail.item.version)).size(font::SMALL).color(t.text_faint));
+        if detail.item.official {
+            widgets::pill(ui, "官方", t.accent_ink, t.accent_soft);
+        }
+        if detail.item.verified {
+            widgets::pill(ui, "已校验", t.success, t.raised);
+        } else {
+            widgets::pill(ui, "未校验", t.danger, t.raised);
+        }
+        if widgets::link(ui, "关闭").clicked() {
+            close = true;
+        }
+    });
+    if !detail.item.description.is_empty() {
+        ui.label(RichText::new(&detail.item.description).size(font::SMALL).color(t.text_dim));
+    }
+    if !detail.item.verified {
+        ui.label(RichText::new("这个条目的内容哈希校验失败；确认来源后再导入。").size(font::SMALL).color(t.danger));
+    }
+    if !detail.item.tags.is_empty() || !detail.item.providers.is_empty() {
+        ui.horizontal_wrapped(|ui| {
+            for tag in &detail.item.tags {
+                widgets::pill(ui, tag, t.text_dim, t.raised);
+            }
+            for provider in &detail.item.providers {
+                widgets::pill(ui, provider, t.accent_ink, t.accent_soft);
+            }
+        });
+    }
+    widgets::key_value(ui, "作者", detail.item.author.as_deref().unwrap_or("（官方）"));
+    widgets::key_value(ui, "来源", &source_label(&detail.item));
+    widgets::key_value(ui, "下载", &detail.item.downloads.to_string());
+    if let Some(warning) = detail.warning.as_deref() {
+        ui.label(RichText::new(warning).size(font::CAPTION).color(t.warning));
+    }
+
+    ui.add_space(space::S);
+    widgets::section_title(ui, "提示词");
+    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
+        ui.add(egui::Label::new(RichText::new(detail.content.prompt.clone()).size(font::SMALL).family(fonts::mono())).wrap_mode(egui::TextWrapMode::Wrap));
+    });
+
+    if !detail.content.knowledge.is_empty() {
+        ui.add_space(space::S);
+        widgets::section_title(ui, &format!("参考资料（{}）", detail.content.knowledge.len()));
+        for file in &detail.content.knowledge {
+            ui.label(RichText::new(format!("{}（{} 字符）", file.name, file.text.chars().count())).size(font::CAPTION).color(t.text_faint));
+        }
+    }
+
+    if !detail.content.skills.is_empty() {
+        ui.add_space(space::S);
+        ui.horizontal(|ui| {
+            widgets::section_title(ui, &format!("关联技能（{}）", detail.content.skills.len()));
+            if widgets::link(ui, "全选").clicked() {
+                app.hub.selected_skills = detail.content.skills.iter().map(|skill| skill.slug.clone()).collect();
+            }
+            if widgets::link(ui, "全不选").clicked() {
+                app.hub.selected_skills.clear();
+            }
+        });
+        for skill in &detail.content.skills {
+            let mut selected = app.hub.selected_skills.contains(&skill.slug);
+            let label = skill.name.as_deref().filter(|name| !name.trim().is_empty()).unwrap_or(&skill.slug);
+            let label = truncate_label(label, 60);
+            if ui.checkbox(&mut selected, RichText::new(format!("{label}（{}）", skill.slug)).size(font::SMALL)).changed() {
+                if selected {
+                    app.hub.selected_skills.insert(skill.slug.clone());
+                } else {
+                    app.hub.selected_skills.remove(&skill.slug);
+                }
+            }
+        }
+    }
+
+    ui.add_space(space::S);
+    ui.horizontal(|ui| {
+        ui.checkbox(&mut app.hub.overwrite, RichText::new("覆盖同名").size(font::SMALL));
+        ui.checkbox(&mut app.hub.include_knowledge, RichText::new("追加 knowledge").size(font::SMALL));
+    });
+    ui.horizontal(|ui| {
+        ui.label(RichText::new("导入为").size(font::CAPTION).color(t.text_faint));
+        ui.add(egui::TextEdit::singleline(&mut app.hub.as_id).hint_text("默认用 Hub slug").desired_width(200.0));
+    });
+    if !detail.item.verified {
+        ui.checkbox(&mut app.hub.confirm_unverified, RichText::new("我确认来源，仍要导入").size(font::SMALL).color(t.danger));
+    }
+
+    ui.add_space(space::S);
+    let can_import = app.hub.can_import();
+    let can_preview = app.hub.can_preview();
+    let mut import = false;
+    let mut preview = false;
+    ui.horizontal(|ui| {
+        if widgets::primary(ui, "导入", can_import).clicked() {
+            import = true;
+        }
+        let preview_response = ui.add_enabled_ui(can_preview, |ui| widgets::secondary(ui, "预览")).inner;
+        if preview_response.clicked() {
+            preview = true;
+        }
+        if widgets::secondary(ui, "关闭").clicked() {
+            close = true;
+        }
+        if app.hub.importing {
+            widgets::working(ui, "正在导入…", None);
+        }
+    });
+    if import {
+        app.spawn_hub_import(false);
+    }
+    if preview {
+        app.spawn_hub_import(true);
+    }
+    if close {
+        app.hub.selected = None;
+        app.hub.detail = None;
+    }
+}
+
+fn provider_label(value: &str) -> &str {
+    if value.is_empty() { "全部" } else { value }
+}
+
+fn source_label(item: &metis_engine::hub::HubSummary) -> String {
+    match item.source.as_ref() {
+        Some(source) if source.kind == "github" => source.repo.as_deref().map(|repo| format!("github: {repo}")).unwrap_or_else(|| "github".to_owned()),
+        Some(source) => source.kind.clone(),
+        None => "inline".to_owned(),
+    }
+}
+
 /// 验证与诊断。
 pub fn diagnostics(app: &mut MetisApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -857,7 +1171,37 @@ pub fn about(app: &mut MetisApp, ui: &mut Ui) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use metis_engine::hub::{DataSource, ExpertContent, HubDetail, HubSummary, KnowledgeFile, SkillRef};
     use metis_paths::Paths;
+
+    fn hub_summary(slug: &str, name: &str, verified: bool) -> HubSummary {
+        HubSummary {
+            kind: "expert".to_owned(),
+            slug: slug.to_owned(),
+            name: name.to_owned(),
+            description: "说明".to_owned(),
+            version: "1.0.0".to_owned(),
+            verified,
+            downloads: 12,
+            tags: vec!["security".to_owned()],
+            ..Default::default()
+        }
+    }
+
+    fn hub_detail(slug: &str, verified: bool, skills: &[&str]) -> HubDetail {
+        HubDetail {
+            item: hub_summary(slug, "安全审查专家", verified),
+            content: ExpertContent {
+                prompt: "你是一名安全审查专家。".to_owned(),
+                knowledge: vec![KnowledgeFile { name: "checklist.md".to_owned(), text: "检查清单".to_owned() }],
+                skills: skills.iter().map(|slug| SkillRef { slug: (*slug).to_owned(), name: Some(format!("技能 {slug}")) }).collect(),
+                ..Default::default()
+            },
+            fetched_at: 1,
+            source: DataSource::Network,
+            warning: None,
+        }
+    }
 
     fn app() -> (tempfile::TempDir, MetisApp) {
         let dir = tempfile::tempdir().expect("tmp");
@@ -953,6 +1297,39 @@ mod tests {
         let kept: Vec<_> = app.snapshot.personas.iter().filter(|p| p.name.to_lowercase().contains(&query) || p.id.to_lowercase().contains(&query)).collect();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].id, "concise");
+    }
+
+    #[test]
+    fn the_hub_card_renders_list_items_and_pagination() {
+        let (_dir, mut app) = app();
+        let empty = render(crate::state::Screen::Library, &mut app);
+        app.hub.items = vec![hub_summary("a", "安全审查专家", true), hub_summary("b", "代码审查专家", false)];
+        app.hub.fetched_at = 1;
+        app.hub.page = 2;
+        app.hub.next_cursor = Some("20".to_owned());
+        let with_items = render(crate::state::Screen::Library, &mut app);
+        assert!(with_items > empty, "空态 {empty} 个图元，有列表 {with_items} 个");
+        assert!(!app.jobs.is_busy(), "渲染不能偷偷发网络请求");
+    }
+
+    #[test]
+    fn the_hub_detail_renders_prompt_knowledge_and_skills() {
+        let (_dir, mut app) = app();
+        let empty = render(crate::state::Screen::Library, &mut app);
+        app.hub.selected = Some("a".to_owned());
+        app.hub.detail = Some(hub_detail("a", true, &["skill-a", "skill-b"]));
+        app.hub.selected_skills.insert("skill-a".to_owned());
+        let with_detail = render(crate::state::Screen::Library, &mut app);
+        assert!(with_detail > empty, "空态 {empty} 个图元，有详情 {with_detail} 个");
+    }
+
+    #[test]
+    fn the_hub_detail_shows_the_unverified_confirmation() {
+        let (_dir, mut app) = app();
+        app.hub.selected = Some("a".to_owned());
+        app.hub.detail = Some(hub_detail("a", false, &[]));
+        assert!(!app.hub.can_import(), "未校验时导入按钮必须是禁用的");
+        assert!(render(crate::state::Screen::Library, &mut app) > 5);
     }
 
     #[test]

@@ -267,7 +267,8 @@ agent-desktop find --role button --name "应用变更"
 - `disposition.retry` 只有 `not_delivered` 才是安全的；其它情况可能已经落地，
   重复点击会点两次（`toggle` 甚至会撤销自己）。
 - 同一窗口里有**同名控件**（比如多行都有"删除"）时 ref 会 `AMBIGUOUS_TARGET`
-  —— 这时要么换个唯一控件，要么用 `--headed mouse-click --xy`。
+  —— **首选**把行标识写进 accessible name（`详情：<名称>`），实在不行才用
+  `--headed mouse-click --xy` 作兜底。
 
 ### 什么时候还需要截图
 

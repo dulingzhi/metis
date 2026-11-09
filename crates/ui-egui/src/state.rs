@@ -2,7 +2,10 @@
 //!
 //! 持久化只走 eframe 的 storage（窗口偏好、上次屏幕），产品设置走引擎。
 
+use std::collections::BTreeSet;
+
 use metis_core::Mode;
+use metis_engine::hub::{HubDetail, HubSummary};
 use serde::{Deserialize, Serialize};
 
 use crate::model::DraftChange;
@@ -92,6 +95,11 @@ pub struct UiState {
     /// **不持久化**：它属于"这次想导什么"，不是偏好，而且改它不该被记住。
     #[serde(skip)]
     pub import_source: String,
+    /// 远端 Hub 地址（偏好，持久化）。
+    ///
+    /// 它是服务器地址，不是"这次想导什么"；用户改过一次之后应该记住。
+    #[serde(default = "default_hub_url")]
+    pub hub_url: String,
     /// 命令面板状态（`Ctrl+K`）。
     ///
     /// **不持久化**：这是"正在输入"的瞬时状态，跨进程保留没有意义，
@@ -136,6 +144,10 @@ fn default_import_source() -> String {
     OFFICIAL_SOURCE.to_owned()
 }
 
+fn default_hub_url() -> String {
+    metis_engine::hub::HUB_DEFAULT_URL.to_owned()
+}
+
 impl Default for UiState {
     fn default() -> Self {
         Self {
@@ -149,6 +161,7 @@ impl Default for UiState {
             reduce_motion: false,
             sidebar_folded: false,
             import_source: default_import_source(),
+            hub_url: default_hub_url(),
             palette: crate::palette::PaletteState::default(),
         }
     }
@@ -175,6 +188,9 @@ impl UiState {
         if state.import_source.trim().is_empty() {
             state.import_source = default_import_source();
         }
+        if state.hub_url.trim().is_empty() {
+            state.hub_url = default_hub_url();
+        }
         state
     }
 
@@ -192,6 +208,154 @@ impl UiState {
         } else {
             self.expanded = Some(harness.to_owned());
         }
+    }
+}
+
+/// 远端 Hub 的浏览状态。
+///
+/// **瞬时状态，不持久化**：搜索词、页码、详情、勾选都不该跨进程保留
+/// （`docs/PITFALLS.md` G65）。只有 `UiState::hub_url` 是偏好。
+#[derive(Debug, Clone)]
+pub struct HubBrowse {
+    /// 搜索词。
+    pub query: String,
+    /// 标签过滤。
+    pub tag: String,
+    /// provider 过滤；空 = 全部。
+    pub provider: String,
+    /// 每页条数。
+    pub page_size: usize,
+    /// 当前页条目。
+    pub items: Vec<HubSummary>,
+    /// 当前页使用的游标。
+    pub cursor: Option<String>,
+    /// 下一页游标。
+    pub next_cursor: Option<String>,
+    /// 访问过的游标（上一页用）。
+    pub history: Vec<Option<String>>,
+    /// 当前页码（1 起）。
+    pub page: usize,
+    /// 列表加载中。
+    pub loading: bool,
+    /// 列表错误。
+    pub error: Option<String>,
+    /// 是否来自过期缓存。
+    pub stale: bool,
+    /// 列表取得时间（Unix 秒）。
+    pub fetched_at: i64,
+    /// 列表告警。
+    pub warning: Option<String>,
+    /// 选中的条目 slug。
+    pub selected: Option<String>,
+    /// 详情。
+    pub detail: Option<HubDetail>,
+    /// 详情加载中。
+    pub detail_loading: bool,
+    /// 详情错误。
+    pub detail_error: Option<String>,
+    /// 列表请求序号（丢弃过期结果）。
+    pub list_seq: u64,
+    /// 详情请求序号（丢弃过期结果）。
+    pub detail_seq: u64,
+    /// 勾选的技能 slug。
+    pub selected_skills: BTreeSet<String>,
+    /// 覆盖同名。
+    pub overwrite: bool,
+    /// 追加 knowledge。
+    pub include_knowledge: bool,
+    /// 未校验条目的二次确认。
+    pub confirm_unverified: bool,
+    /// 导入为；空 = 用 Hub slug。
+    pub as_id: String,
+    /// 导入中。
+    pub importing: bool,
+}
+
+impl Default for HubBrowse {
+    fn default() -> Self {
+        Self {
+            query: String::new(),
+            tag: String::new(),
+            provider: String::new(),
+            page_size: 20,
+            items: Vec::new(),
+            cursor: None,
+            next_cursor: None,
+            history: Vec::new(),
+            page: 1,
+            loading: false,
+            error: None,
+            stale: false,
+            fetched_at: 0,
+            warning: None,
+            selected: None,
+            detail: None,
+            detail_loading: false,
+            detail_error: None,
+            list_seq: 0,
+            detail_seq: 0,
+            selected_skills: BTreeSet::new(),
+            overwrite: false,
+            include_knowledge: true,
+            confirm_unverified: false,
+            as_id: String::new(),
+            importing: false,
+        }
+    }
+}
+
+impl HubBrowse {
+    /// 搜索或换每页条数：回到第一页，清空游标历史。
+    pub fn reset_paging(&mut self) {
+        self.cursor = None;
+        self.next_cursor = None;
+        self.history.clear();
+        self.page = 1;
+    }
+
+    /// 前进到下一页；没有下一页时返回 `false`。
+    pub fn advance(&mut self) -> bool {
+        let Some(next) = self.next_cursor.clone() else { return false };
+        self.history.push(self.cursor.clone());
+        self.cursor = Some(next);
+        self.page = self.page.saturating_add(1);
+        true
+    }
+
+    /// 回到上一页；已经在第一页时返回 `false`。
+    pub fn retreat(&mut self) -> bool {
+        let Some(previous) = self.history.pop() else { return false };
+        self.cursor = previous;
+        self.page = self.page.saturating_sub(1);
+        true
+    }
+
+    /// 详情里的技能是否全被勾选。
+    pub fn all_skills_selected(&self, detail: &HubDetail) -> bool {
+        !detail.content.skills.is_empty() && detail.content.skills.iter().all(|skill| self.selected_skills.contains(&skill.slug))
+    }
+
+    /// 生成 `metis.hub-import` 的 `skills` 参数。
+    pub fn skills_param(&self, detail: &HubDetail) -> serde_json::Value {
+        if detail.content.skills.is_empty() || self.selected_skills.is_empty() {
+            return serde_json::json!("none");
+        }
+        if self.all_skills_selected(detail) {
+            return serde_json::json!("all");
+        }
+        let slugs: Vec<&str> =
+            detail.content.skills.iter().filter(|skill| self.selected_skills.contains(&skill.slug)).map(|skill| skill.slug.as_str()).collect();
+        serde_json::json!(slugs)
+    }
+
+    /// 未校验的条目必须先勾选确认；导入中禁用。
+    pub fn can_import(&self) -> bool {
+        !self.importing && self.detail.as_ref().is_some_and(|detail| detail.item.verified || self.confirm_unverified)
+    }
+
+    /// 预览是只读操作，不需要未校验确认；导入中禁用。
+    pub fn can_preview(&self) -> bool {
+        !self.importing && self.detail.is_some()
     }
 }
 
@@ -295,6 +459,101 @@ mod tests {
     #[test]
     fn storage_key_is_stable() {
         assert_eq!(UiState::STORAGE_KEY, "metis-ui");
+    }
+
+    #[test]
+    fn the_hub_url_defaults_to_the_builtin_hub() {
+        assert_eq!(UiState::default().hub_url, metis_engine::hub::HUB_DEFAULT_URL);
+    }
+
+    #[test]
+    fn a_missing_hub_url_falls_back_to_the_default() {
+        // 旧的 storage 里没有 hub_url；`serde(default = ...)` 必须补上默认值，
+        // 而不是留一个空输入框（G72 的同类问题）。
+        let text = r#"{"screen":"console","sidebar_width":200,"show_uninstalled":true,"persona_query":"","dark":false}"#;
+        let state: UiState = serde_json::from_str(text).expect("parse");
+        assert_eq!(state.hub_url, metis_engine::hub::HUB_DEFAULT_URL);
+    }
+
+    #[test]
+    fn a_saved_hub_url_round_trips() {
+        let state = UiState { hub_url: "https://hub.example.com".to_owned(), ..UiState::default() };
+        let text = serde_json::to_string(&state).expect("json");
+        let back: UiState = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back.hub_url, "https://hub.example.com");
+    }
+
+    fn summary() -> HubSummary {
+        HubSummary { kind: "expert".to_owned(), slug: "a".to_owned(), name: "A".to_owned(), version: "1.0.0".to_owned(), verified: true, ..Default::default() }
+    }
+
+    fn detail(verified: bool, skills: &[&str]) -> HubDetail {
+        HubDetail {
+            item: HubSummary { verified, ..summary() },
+            content: metis_engine::hub::ExpertContent {
+                prompt: "p".to_owned(),
+                skills: skills.iter().map(|slug| metis_engine::hub::SkillRef { slug: (*slug).to_owned(), name: None }).collect(),
+                ..Default::default()
+            },
+            fetched_at: 0,
+            source: metis_engine::hub::DataSource::Network,
+            warning: None,
+        }
+    }
+
+    #[test]
+    fn hub_browse_defaults_to_the_first_page() {
+        let hub = HubBrowse::default();
+        assert_eq!(hub.page, 1);
+        assert_eq!(hub.page_size, 20);
+        assert!(hub.include_knowledge);
+        assert!(!hub.can_import(), "没有详情时不能导入");
+    }
+
+    #[test]
+    fn hub_pagination_uses_a_cursor_stack() {
+        let mut hub = HubBrowse { next_cursor: Some("20".to_owned()), ..HubBrowse::default() };
+        assert!(hub.advance());
+        assert_eq!(hub.page, 2);
+        assert_eq!(hub.cursor.as_deref(), Some("20"));
+        assert_eq!(hub.history.len(), 1);
+
+        hub.next_cursor = Some("40".to_owned());
+        assert!(hub.advance());
+        assert_eq!(hub.page, 3);
+        assert_eq!(hub.history.len(), 2);
+
+        assert!(hub.retreat());
+        assert_eq!(hub.page, 2);
+        assert_eq!(hub.cursor.as_deref(), Some("20"));
+        assert!(hub.retreat());
+        assert_eq!(hub.page, 1);
+        assert_eq!(hub.cursor, None);
+        assert!(!hub.retreat(), "第一页没有上一页");
+    }
+
+    #[test]
+    fn hub_skill_selection_reports_all_none_and_only() {
+        let detail = detail(true, &["a", "b"]);
+        let mut hub = HubBrowse::default();
+        assert_eq!(hub.skills_param(&detail), serde_json::json!("none"));
+        hub.selected_skills.insert("a".to_owned());
+        assert_eq!(hub.skills_param(&detail), serde_json::json!(["a"]));
+        hub.selected_skills.insert("b".to_owned());
+        assert_eq!(hub.skills_param(&detail), serde_json::json!("all"));
+        assert!(hub.all_skills_selected(&detail));
+    }
+
+    #[test]
+    fn hub_import_requires_confirmation_for_unverified_content() {
+        let mut hub = HubBrowse { detail: Some(detail(false, &[])), ..HubBrowse::default() };
+        assert!(!hub.can_import(), "未校验时默认不能导入");
+        assert!(hub.can_preview(), "预览只读，不需要确认");
+        hub.confirm_unverified = true;
+        assert!(hub.can_import(), "二次确认后可以导入");
+        hub.importing = true;
+        assert!(!hub.can_import(), "导入中不能再点");
+        assert!(!hub.can_preview(), "导入中不能预览");
     }
 }
 

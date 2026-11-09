@@ -5,13 +5,14 @@
 use serde_json::json;
 
 use metis_core::{Channel, Mode};
+use metis_engine::hub::{DataSource, HubDetail, HubPage};
 use metis_engine::{CommandOutput, Commands, Engine};
 use metis_paths::Paths;
 
 use crate::jobs::{Finished, Jobs};
 use crate::model::{self, HarnessRow, PersonaRow};
 use crate::screens;
-use crate::state::{Draft, Notice, NoticeTone, Screen, UiState};
+use crate::state::{Draft, HubBrowse, Notice, NoticeTone, Screen, UiState};
 use crate::theme::Tokens;
 
 /// 后台任务产出的结果类型。
@@ -29,6 +30,46 @@ pub enum JobDone {
         value: Box<serde_json::Value>,
         /// `true` = 这是预览（没写盘）。
         dry_run: bool,
+    },
+    /// 远端 Hub 列表加载完成。
+    HubListed {
+        /// 请求序号；回来后对不上就丢弃（乱序保护）。
+        seq: u64,
+        /// `metis.hub-list` 的输出。
+        value: Box<serde_json::Value>,
+    },
+    /// 远端 Hub 列表加载失败。
+    HubListFailed {
+        /// 请求序号。
+        seq: u64,
+        /// 错误信息（含补救建议）。
+        message: String,
+    },
+    /// 远端 Hub 详情加载完成。
+    HubDetailLoaded {
+        /// 请求序号。
+        seq: u64,
+        /// `metis.hub-show` 的输出。
+        value: Box<serde_json::Value>,
+    },
+    /// 远端 Hub 详情加载失败。
+    HubDetailFailed {
+        /// 请求序号。
+        seq: u64,
+        /// 错误信息（含补救建议）。
+        message: String,
+    },
+    /// 远端 Hub 导入完成。
+    HubImported {
+        /// `metis.hub-import` 的输出。
+        value: Box<serde_json::Value>,
+        /// `true` = 预览（没写盘）。
+        dry_run: bool,
+    },
+    /// 远端 Hub 导入失败。
+    HubImportFailed {
+        /// 错误信息（含补救建议）。
+        message: String,
     },
 }
 
@@ -62,6 +103,8 @@ pub struct MetisApp {
     pub snapshot: Snapshot,
     /// 后台任务。
     pub jobs: Jobs<JobDone>,
+    /// 远端 Hub 的浏览状态（瞬时）。
+    pub hub: HubBrowse,
     /// 顶部提示。
     pub notice: Option<Notice>,
     /// 正在运行的命令 id（用来禁用按钮）。
@@ -83,6 +126,7 @@ impl MetisApp {
             draft: Draft::default(),
             snapshot: Snapshot::default(),
             jobs: Jobs::new(),
+            hub: HubBrowse::default(),
             notice: None,
             busy: None,
         }
@@ -255,6 +299,155 @@ impl MetisApp {
         });
     }
 
+    /// 后台加载远端 Hub 的一页列表。
+    ///
+    /// `refresh=true` 绕过缓存新鲜期；分页/搜索走 false。
+    pub fn spawn_hub_list(&mut self, refresh: bool) {
+        if self.hub.loading {
+            return;
+        }
+        let url = self.ui.hub_url.trim().to_owned();
+        if url.is_empty() {
+            self.notify("先填 Hub 地址", NoticeTone::Warning);
+            return;
+        }
+        let seq = self.hub.list_seq.wrapping_add(1);
+        self.hub.list_seq = seq;
+        self.hub.loading = true;
+        self.hub.error = None;
+
+        let page_size = self.hub.page_size;
+        let query = self.hub.query.trim().to_owned();
+        let tag = self.hub.tag.trim().to_owned();
+        let provider = self.hub.provider.clone();
+        let cursor = self.hub.cursor.clone();
+        let engine = self.engine.clone();
+        let commands = Commands::default_set();
+        self.jobs.spawn("加载远端人设库", move |_| {
+            let mut params = json!({ "url": url, "limit": page_size, "refresh": refresh });
+            if !query.is_empty() {
+                params["query"] = json!(query);
+            }
+            if !tag.is_empty() {
+                params["tag"] = json!(tag);
+            }
+            if !provider.is_empty() {
+                params["provider"] = json!(provider);
+            }
+            if let Some(cursor) = cursor {
+                params["cursor"] = json!(cursor);
+            }
+            match commands.run("metis.hub-list", &engine, &params) {
+                Ok(output) => Ok(JobDone::HubListed { seq, value: Box::new(output.to_json()) }),
+                Err(error) => Ok(JobDone::HubListFailed { seq, message: error.to_string() }),
+            }
+        });
+    }
+
+    /// 搜索：回到第一页再拉。
+    pub fn spawn_hub_search(&mut self) {
+        self.hub.reset_paging();
+        self.spawn_hub_list(false);
+    }
+
+    /// 下一页。
+    pub fn spawn_hub_next_page(&mut self) {
+        if self.hub.advance() {
+            self.spawn_hub_list(false);
+        }
+    }
+
+    /// 上一页。
+    pub fn spawn_hub_prev_page(&mut self) {
+        if self.hub.retreat() {
+            self.spawn_hub_list(false);
+        }
+    }
+
+    /// 后台加载一个 expert 的详情。
+    pub fn spawn_hub_detail(&mut self, slug: String, version: Option<String>) {
+        let url = self.ui.hub_url.trim().to_owned();
+        if url.is_empty() {
+            self.notify("先填 Hub 地址", NoticeTone::Warning);
+            return;
+        }
+        let seq = self.hub.detail_seq.wrapping_add(1);
+        self.hub.detail_seq = seq;
+        self.hub.selected = Some(slug.clone());
+        self.hub.detail = None;
+        self.hub.detail_loading = true;
+        self.hub.detail_error = None;
+        self.hub.selected_skills.clear();
+        self.hub.overwrite = false;
+        self.hub.include_knowledge = true;
+        self.hub.confirm_unverified = false;
+        self.hub.as_id.clear();
+
+        let engine = self.engine.clone();
+        let commands = Commands::default_set();
+        self.jobs.spawn("读取远端详情", move |_| {
+            let mut params = json!({ "url": url, "slug": slug, "refresh": true });
+            if let Some(version) = version {
+                params["version"] = json!(version);
+            }
+            match commands.run("metis.hub-show", &engine, &params) {
+                Ok(output) => Ok(JobDone::HubDetailLoaded { seq, value: Box::new(output.to_json()) }),
+                Err(error) => Ok(JobDone::HubDetailFailed { seq, message: error.to_string() }),
+            }
+        });
+    }
+
+    /// 后台导入选中的 expert（`dry_run=true` 只预览）。
+    pub fn spawn_hub_import(&mut self, dry_run: bool) {
+        if self.hub.importing {
+            return;
+        }
+        let Some(detail) = self.hub.detail.clone() else {
+            self.notify("先选一个远端条目", NoticeTone::Warning);
+            return;
+        };
+        if !dry_run && !detail.item.verified && !self.hub.confirm_unverified {
+            self.notify("这个条目未通过哈希校验；先勾选「我确认来源」", NoticeTone::Warning);
+            return;
+        }
+        let url = self.ui.hub_url.trim().to_owned();
+        if url.is_empty() {
+            self.notify("先填 Hub 地址", NoticeTone::Warning);
+            return;
+        }
+        let slug = detail.item.slug.clone();
+        let version = detail.item.version.clone();
+        let as_id = self.hub.as_id.trim().to_owned();
+        let skills = self.hub.skills_param(&detail);
+        let overwrite = self.hub.overwrite;
+        let include_knowledge = self.hub.include_knowledge;
+        let allow_unverified = self.hub.confirm_unverified;
+        self.hub.importing = true;
+
+        let engine = self.engine.clone();
+        let commands = Commands::default_set();
+        self.jobs.spawn("导入远端人设", move |_| {
+            let mut params = json!({
+                "url": url,
+                "slug": slug,
+                "version": version,
+                "overwrite": overwrite,
+                "dryRun": dry_run,
+                "includeKnowledge": include_knowledge,
+                "allowUnverified": allow_unverified,
+                "skills": skills,
+                "refresh": true,
+            });
+            if !as_id.is_empty() {
+                params["as"] = json!(as_id);
+            }
+            match commands.run("metis.hub-import", &engine, &params) {
+                Ok(output) => Ok(JobDone::HubImported { value: Box::new(output.to_json()), dry_run }),
+                Err(error) => Ok(JobDone::HubImportFailed { message: error.to_string() }),
+            }
+        });
+    }
+
     fn collect_snapshot(&self) -> metis_core::Result<Snapshot> {
         collect_snapshot_with(&self.engine, &self.commands)
     }
@@ -314,6 +507,89 @@ impl MetisApp {
                     {
                         self.notify(format!("失败原因：{detail}"), NoticeTone::Error);
                     }
+                }
+                Finished::Done(_, JobDone::HubListed { seq, value }) => {
+                    if seq == self.hub.list_seq {
+                        self.hub.loading = false;
+                        match serde_json::from_value::<HubPage>(*value) {
+                            Ok(page) => {
+                                self.hub.items = page.items;
+                                self.hub.next_cursor = page.next_cursor;
+                                self.hub.stale = page.source == DataSource::CacheStale;
+                                self.hub.fetched_at = page.fetched_at;
+                                self.hub.warning = page.warning;
+                                self.hub.error = None;
+                            }
+                            Err(error) => {
+                                let text = format!("解析列表失败：{error}");
+                                self.hub.error = Some(text.clone());
+                                self.notify(text, NoticeTone::Error);
+                            }
+                        }
+                    }
+                }
+                Finished::Done(_, JobDone::HubListFailed { seq, message }) => {
+                    if seq == self.hub.list_seq {
+                        self.hub.loading = false;
+                        self.hub.error = Some(message.clone());
+                        self.notify(message, NoticeTone::Error);
+                    }
+                }
+                Finished::Done(_, JobDone::HubDetailLoaded { seq, value }) => {
+                    if seq == self.hub.detail_seq {
+                        self.hub.detail_loading = false;
+                        match serde_json::from_value::<HubDetail>(*value) {
+                            Ok(detail) => {
+                                // 默认全选关联技能；用户可以在卡片里取消。
+                                self.hub.selected_skills = detail.content.skills.iter().map(|skill| skill.slug.clone()).collect();
+                                self.hub.detail = Some(detail);
+                                self.hub.detail_error = None;
+                            }
+                            Err(error) => {
+                                let text = format!("解析详情失败：{error}");
+                                self.hub.detail_error = Some(text.clone());
+                                self.notify(text, NoticeTone::Error);
+                            }
+                        }
+                    }
+                }
+                Finished::Done(_, JobDone::HubDetailFailed { seq, message }) => {
+                    if seq == self.hub.detail_seq {
+                        self.hub.detail_loading = false;
+                        self.hub.detail_error = Some(message.clone());
+                        self.notify(message, NoticeTone::Error);
+                    }
+                }
+                Finished::Done(_, JobDone::HubImported { value, dry_run }) => {
+                    self.hub.importing = false;
+                    if !dry_run {
+                        self.refresh_blocking();
+                    }
+                    let prefix = if dry_run { "预览" } else { "导入" };
+                    let outcome = value.get("outcome").and_then(|v| v.as_str()).unwrap_or("unknown");
+                    let persona = value.get("personaId").and_then(|v| v.as_str()).unwrap_or("-");
+                    let skills = value.get("skills").and_then(|v| v.as_array()).cloned().unwrap_or_default();
+                    let installed = skills
+                        .iter()
+                        .filter(|skill| matches!(skill.get("outcome").and_then(|v| v.as_str()), Some("imported" | "overwritten" | "identical")))
+                        .count();
+                    let failed = skills.iter().filter(|skill| skill.get("outcome").and_then(|v| v.as_str()) == Some("failed")).count();
+                    let tone = if failed > 0 || outcome == "failed" || outcome == "skipped" { NoticeTone::Warning } else { NoticeTone::Success };
+                    let skill_note = if skills.is_empty() {
+                        String::new()
+                    } else if failed > 0 {
+                        format!("，技能 {installed} 个，{failed} 个失败")
+                    } else {
+                        format!("，技能 {installed} 个")
+                    };
+                    self.notify(format!("{prefix}完成：{persona}（{outcome}）{skill_note}"), tone);
+                    if let Some(warning) = value.get("warning").and_then(|v| v.as_str()) {
+                        self.notify(format!("注意：{warning}"), NoticeTone::Warning);
+                    }
+                }
+                Finished::Done(_, JobDone::HubImportFailed { message }) => {
+                    self.hub.importing = false;
+                    self.notify(message, NoticeTone::Error);
                 }
                 Finished::Cancelled(_) => self.notify("已取消", NoticeTone::Info),
             }
@@ -816,5 +1092,48 @@ mod tests {
         wait_for_idle(&mut app);
         assert!(app.busy.is_none(), "跑完必须清掉忙碌标记");
         assert_eq!(app.snapshot.harnesses.len(), 15);
+    }
+
+    #[test]
+    fn hub_list_with_a_bad_url_reports_an_error_without_network() {
+        let (_dir, mut app) = app();
+        app.ui.hub_url = "http://example.com".to_owned();
+        app.spawn_hub_list(false);
+        wait_for_idle(&mut app);
+        assert!(!app.hub.loading, "失败后必须清掉 loading");
+        let error = app.hub.error.as_deref().expect("错误应留在卡片里");
+        assert!(error.contains("https") || error.contains("协议"), "{error}");
+    }
+
+    #[test]
+    fn hub_import_without_a_detail_is_refused() {
+        let (_dir, mut app) = app();
+        app.spawn_hub_import(false);
+        assert!(!app.jobs.is_busy(), "没有详情时不该起后台任务");
+        let notice = app.notice.as_ref().expect("提示");
+        assert!(notice.text.contains("先选"), "{}", notice.text);
+    }
+
+    #[test]
+    fn hub_import_of_unverified_content_needs_confirmation() {
+        let (_dir, mut app) = app();
+        app.hub.detail = Some(HubDetail {
+            item: metis_engine::hub::HubSummary {
+                kind: "expert".to_owned(),
+                slug: "a".to_owned(),
+                name: "A".to_owned(),
+                version: "1.0.0".to_owned(),
+                verified: false,
+                ..Default::default()
+            },
+            content: metis_engine::hub::ExpertContent { prompt: "p".to_owned(), ..Default::default() },
+            fetched_at: 0,
+            source: DataSource::Network,
+            warning: None,
+        });
+        app.spawn_hub_import(false);
+        assert!(!app.jobs.is_busy(), "未确认时不该起后台任务");
+        let notice = app.notice.as_ref().expect("提示");
+        assert!(notice.text.contains("确认"), "{}", notice.text);
     }
 }

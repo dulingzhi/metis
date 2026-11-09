@@ -99,6 +99,8 @@ metis hub import expert/<slug>          # 导入人设；关联 skill 落到 ~/.
 metis-gui
 ```
 
+人设库屏可以直接浏览/导入远端 Hub（worldd / KK Hub）；导入只写本地，不会自动 apply。
+
 ---
 
 ## 核心概念

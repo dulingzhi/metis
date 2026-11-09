@@ -4,12 +4,12 @@
 > 每条"能做什么"必须能指出**代码位置**与**测试名**；指不出来就写"未实现"。
 > 不允许把计划写成已完成。
 
-最后更新：M0–M10 的主要闭环已落地（见下）；M10.1–M10.3 的 Hub 客户端、导入、技能落盘与 CLI 已有代码与测试，尚未接 GUI。
+最后更新：M0–M10 的主要闭环已落地（见下）；M10.1–M10.4 的 Hub 客户端、导入、技能落盘、CLI 与 GUI 已有代码与测试。
 
 ## 一句话
 
 **Metis 现在能用了**：`metis` CLI 可以管人设、改模式、武装通道、应用、暂停/恢复，并且**写入可逆**
-（逐字节回滚、账本、外部修改保护）。桌面 GUI 已能开窗并显示四个屏幕。`cargo test --workspace`
+（逐字节回滚、账本、外部修改保护）。桌面 GUI 已能开窗、显示四个屏幕，并在人设库屏浏览/导入远端 Hub。`cargo test --workspace`
 **全绿**，`clippy -D warnings` 与全部 xtask 门禁通过。
 
 ## 已经能用（有代码、有测试）
@@ -35,7 +35,7 @@
 | **`clean` / `uninstall` / `self-uninstall`**（按账本撤回，先过安全闸门） | `crates/engine/src/clean.rs` | `clean::tests::*`（10 个，含"危险数据根拒绝"、"有残留就保留目录"）、`self_uninstall_refuses_without_confirmation` |
 | **`import-agent-purge`**（只读导入，不导入 armed） | `crates/engine/src/import.rs` | `import::tests::*`（11 个，含"源文件一个字节都不变"、"active.md 不当人设"） |
 | **UI 自动化测试** | `scripts/ui-test.ps1` | 12 项：面板开关/Esc/Ctrl+K、侧栏四项 role=button、三次切屏、主题切换、面板 Enter 执行。**实测能抓 bug**：注释掉 Esc 修复 → 立刻报红 |
-| **快照基线（P5）** | `crates/ui-egui/tests/snapshot.rs`、`tests/snapshots/*.png` | 5 张基线；3 条无 GPU 测试（用例覆盖全屏、深浅两主题、fixture 确定性）+ 2 条 `#[ignore]` 渲染测试。**实测**：改 2px 内边距 → 5 张全红；恢复 → 全绿 |
+| **快照基线（P5）** | `crates/ui-egui/tests/snapshot.rs`、`tests/snapshots/*.png` | 5 张基线；3 条无 GPU 测试（用例覆盖全屏、深浅两主题、fixture 确定性）+ 2 条 `#[ignore]` 渲染测试。fixture 固定执行器行（不再随本机 PATH 漂移）。**实测**：改 2px 内边距 → 5 张全红；恢复 → 全绿 |
 | **命令面板（P4）** | `crates/ui-egui/src/palette.rs` | 16 条：条目完整性与图标、子序列匹配、过滤、`Enter` 执行、`Esc` 关闭、`↑↓` 循环、两主题渲染、空结果。覆盖率 98.8% |
 | **四个屏幕（P3）** | `crates/ui-egui/src/screens/mod.rs` | 8 条：四屏渲染、深色渲染、三模式瓦片、应用按钮启用逻辑、空状态、搜索过滤、busy 态、关于屏 |
 | **侧栏（P2）** | `crates/ui-egui/src/sidebar.rs` | 6 条：图标映射、窄窗自动折叠、手动折叠优先、两态渲染、四屏选中态。**真机验证** 1300px 展开 / 820px 自动折叠 |
@@ -48,6 +48,7 @@
 | **Hub 导入（expert → 人设 + 关联技能）** | `crates/engine/src/hub_import.rs`、`commands_hub.rs` | `hub_import::tests::*`（9 条 + 1 条真机 `#[ignore]`：导入、dry-run、identical、覆盖、未校验拒绝、关闭 knowledge、`--as`、技能上限与筛选、front-matter 标量；**真机**：对 `n.kkpt.tech` 实际导入并落技能）；`commands_hub::tests::*`（10 条：list/show/import/skill 的参数与坏输入）。只写本地人设/技能，不自动 apply |
 | **Hub 技能落盘（安装 / 更新 / 移除）** | `crates/engine/src/hub_skills.rs`、`crates/paths/src/lib.rs::skills_dir` | `hub_skills::tests::*`（10 条：清单、幂等、版本更新清旧文件、无清单不覆盖、dry-run、路径穿越、只删自己的文件、无清单拒绝移除、坏清单拒绝、Windows 路径分隔符） |
 | **Hub CLI（`hub list\|show\|import\|skill`）** | `apps/metis/src/main.rs`、`crates/engine/src/commands_hub.rs` | `apps/metis/tests/cli.rs` 新增 2 条（帮助列出四个子命令、坏 URL/provider/slug/skills 不联网）；`commands_hub::tests::*` 新增 3 条（provider、limit、show slug）。**真机**：`list` / `show` / `import`（1 expert + 3 skill）/ `skill remove` 全跑通 |
+| **GUI 远端人设库** | `crates/ui-egui/src/{app,state,screens}.rs` | `state` 7 条（URL 默认/持久化、游标栈、skills all/none/only、未校验确认）；`app` 3 条（坏 URL、无详情、未校验）；`screens` 3 条（列表、详情、未校验）；快照基线重建。**真实窗口**：agent-desktop 加载 → 列表 → 详情通过 |
 | **CLI 补齐（4 条）** | `apps/metis/src/main.rs` | 10 条 e2e：`use` 无 id 打印/列例外、`sync` 不改人设、`install` 只开一条通道、`install nope` 退出 2、`slash status/on/off` 往返 |
 | **`project` 通道 CLI**（登记 / 摘除 / 列出，摘除先撤盘） | `crates/engine/src/commands_project.rs` | `commands_project::tests::*`（8 条，含 `remove_takes_the_block_off_disk`、`list_flags_a_directory_that_was_deleted`）。**真机端到端验证**：add → apply 写入 `<!-- metis:begin -->` 块 → remove 后标记消失 |
 | **slash golden 测试** | `crates/channel/src/slash.rs`（`golden_tests`） | 5 份 golden（extension / opencode v1 / v2 / dsh-plugin / runtime）；**实测改模板会让它变红**；`cargo xtask golden` 重建 |
@@ -91,7 +92,6 @@
 |---|---|---|
 
 | 人设导入（本地目录 / GitHub `owner/repo`） | M2.2 | 未做（`import-agent-purge` 已能导入，但没有通用的"从目录/GitHub 拉人设"） |
-| 远端 Hub 的 GUI | M10.4 | engine 与 CLI 已就绪；界面未接 |
 
 | GUI 的诊断屏真实内容、导入/更新对话框、i18n | M6.3–M6.8 | 部分：4 个屏幕能渲染，但诊断屏只显示路径与一个按钮 |
 | GUI 的更新对话框 | M6.7 | 未做（`clean` / `import` / `verify` 的按钮已接上） |
@@ -137,4 +137,4 @@ CLI 已覆盖选/用/装/看/维护五组命令；仍缺 `armor` / `update` / `p
 
 ## 下一步
 
-按 `docs/ROADMAP.md`：M10.4（GUI 远端库卡片、分页、详情、技能勾选、未校验二次确认）。
+按 `docs/ROADMAP.md`：M10.5（文档审计、README/PARITY 收尾、真实 worldd 调用记录归档）。

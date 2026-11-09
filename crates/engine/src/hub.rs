@@ -384,7 +384,7 @@ impl ExpertContent {
 }
 
 /// 一页列表。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HubPage {
     /// 条目摘要。
@@ -402,7 +402,7 @@ pub struct HubPage {
 }
 
 /// 一个 expert 的完整详情。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HubDetail {
     /// 摘要字段。
@@ -413,6 +413,10 @@ pub struct HubDetail {
     /// 这份数据的取得时间（Unix 秒）。
     pub fetched_at: i64,
     /// 来自网络还是缓存。
+    ///
+    /// 序列化成 `dataSource`：`item` 被 `flatten`，它自己也有一个 `source`（条目来源）；
+    /// 两个同名字段会让 JSON 出现重复键，反序列化就坏了。
+    #[serde(rename = "dataSource")]
     pub source: DataSource,
     /// 解析时的告警。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -498,7 +502,8 @@ pub struct HubSkillDetail {
     pub content: SkillContent,
     /// 这份数据的取得时间（Unix 秒）。
     pub fetched_at: i64,
-    /// 来自网络还是缓存。
+    /// 来自网络还是缓存。序列化成 `dataSource`（与 `item.source` 区分，见 `HubDetail`）。
+    #[serde(rename = "dataSource")]
     pub source: DataSource,
     /// 解析时的告警。
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -1342,6 +1347,34 @@ mod tests {
         let detail = client.show_expert("security-reviewer", None, false).expect("detail");
         assert_eq!(detail.content.effective_model(), Some("opus"));
         assert_eq!(detail.content.effective_tools().to_vec(), vec!["Grep".to_owned()]);
+    }
+
+    #[test]
+    fn page_and_detail_round_trip_through_json() {
+        // UI 后台任务拿到的是命令输出的 JSON，要能反序列化回类型。
+        let item = HubSummary {
+            kind: "expert".to_owned(),
+            slug: "a".to_owned(),
+            name: "A".to_owned(),
+            version: "1.0.0".to_owned(),
+            verified: true,
+            ..Default::default()
+        };
+        let page = HubPage { items: vec![item.clone()], next_cursor: Some("20".to_owned()), fetched_at: 1, source: DataSource::Network, warning: None };
+        let text = serde_json::to_string(&page).expect("json");
+        let back: HubPage = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back, page);
+
+        let detail = HubDetail {
+            item,
+            content: ExpertContent { prompt: "p".to_owned(), ..Default::default() },
+            fetched_at: 2,
+            source: DataSource::Cache,
+            warning: Some("w".to_owned()),
+        };
+        let text = serde_json::to_string(&detail).expect("json");
+        let back: HubDetail = serde_json::from_str(&text).expect("parse");
+        assert_eq!(back, detail);
     }
 
     #[test]

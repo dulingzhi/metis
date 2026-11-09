@@ -51,6 +51,21 @@ fn fixture_app() -> (tempfile::TempDir, MetisApp) {
     let mut app = MetisApp::with_paths(paths);
     app.refresh_blocking();
 
+    // `refresh_blocking` 会探测本机 PATH（`harness.list` 的 `detect: true`），
+    // 于是 console 的快照会随"那台机器装了什么"漂移 —— 这正是 G67 的根因。
+    // 用注册表的**静态事实**重建一份确定的行；安装状态也写死。
+    app.snapshot.harnesses = metis_harness::registry::all()
+        .iter()
+        .map(|spec| {
+            let mut row = metis_ui_egui::model::row_from_spec(spec, &[], None);
+            row.on = false;
+            row.explain = "未启用".to_owned();
+            row.installed = Some(true);
+            row.has_binary = true;
+            row
+        })
+        .collect();
+
     // 固定内容：人设、草稿、展开项都写死，否则基线会随本机状态漂移。
     app.snapshot.personas = vec![
         metis_ui_egui::model::PersonaRow {
