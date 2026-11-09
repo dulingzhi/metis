@@ -198,9 +198,19 @@ fn report(detail: &HubSkillDetail, outcome: ImportOutcome, entry: Option<&Path>,
         description,
         version: detail.item.version.clone(),
         outcome,
-        entry: entry.map(|path| path.display().to_string()),
+        entry: entry.map(display_path),
         detail: note,
     }
+}
+
+/// 路径显示：Windows 上统一用反斜杠。
+///
+/// 用户可能用 `--home C:/x` 或 Git Bash 的 `/tmp/x` 传入数据目录；`Path::display()`
+/// 会保留原来的分隔符，拼出来的技能路径就成了 `C:/x\skills\...`。对 harness 来说
+/// 这仍然是合法路径，但读起来很怪，也不容易复制。
+pub(crate) fn display_path(path: &Path) -> String {
+    let text = path.display().to_string();
+    if cfg!(windows) { text.replace('/', "\\") } else { text }
 }
 
 fn read_manifest(path: &Path) -> Result<Option<SkillManifest>> {
@@ -382,5 +392,15 @@ mod tests {
         let error = install_skill(&paths, &detail("1.0.0", vec![]), &SkillInstallOptions::default()).expect_err("must fail");
         assert_eq!(error.kind(), ErrorKind::Refused);
         assert!(error.remediation().is_some());
+    }
+
+    #[test]
+    fn display_path_uses_the_platform_separator() {
+        let text = display_path(Path::new("root/skills/x/SKILL.md"));
+        if cfg!(windows) {
+            assert!(!text.contains('/'), "Windows 路径应统一成反斜杠：{text}");
+        } else {
+            assert!(text.contains('/'), "Unix 路径保持正斜杠：{text}");
+        }
     }
 }

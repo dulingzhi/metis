@@ -155,6 +155,8 @@ impl Commands {
         commands.register(crate::commands_update::Journal);
         commands.register(crate::commands_update::PruneJournal);
         commands.register(crate::commands_import::ImportPersonas);
+        commands.register(crate::commands_hub::HubList);
+        commands.register(crate::commands_hub::HubShow);
         commands.register(crate::commands_hub::HubImport);
         commands.register(crate::commands_hub::HubSkillInstall);
         commands.register(crate::commands_hub::HubSkillRemove);

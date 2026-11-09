@@ -4,7 +4,7 @@
 > 每条"能做什么"必须能指出**代码位置**与**测试名**；指不出来就写"未实现"。
 > 不允许把计划写成已完成。
 
-最后更新：M0–M10 的主要闭环已落地（见下）；M10.1/M10.2 的 Hub 客户端、导入与技能落盘已有代码与测试，尚未接 CLI/GUI。
+最后更新：M0–M10 的主要闭环已落地（见下）；M10.1–M10.3 的 Hub 客户端、导入、技能落盘与 CLI 已有代码与测试，尚未接 GUI。
 
 ## 一句话
 
@@ -44,9 +44,10 @@
 | **执行器卡片（自适应网格）** | `crates/ui-egui/src/screens/mod.rs` | 6 条：`grid_columns` 三档宽度、卡片固定高度、首屏预算、浮层选中才画/未知 id 不画/不改变页图元数。**真机验证**：4 列流式换行、下拉不超框、详情浮层对齐 |
 | **GUI GitHub 导入** | `crates/ui-egui/src/{actions,app,screens}.rs` | 5 条：默认源、空地址拦截、命令映射、后台任务、标签。**真机验证**：点「导入」→ 5 份人设出现在列表，显示「导入完成」 |
 | **GitHub 人设源** | `crates/engine/src/tarball.rs`、`persona_import.rs` | 20 条：tarball 解包（前缀剥离/文档跳过/非 UTF-8/坏包/目录）、单请求验证、无索引兼容、404/网络/坏 JSON。**真机验证**：从 `dulingzhi/metis-personas` 导入 5 份，1.3s |
-| **远端 Hub 客户端（内部基础，尚未接 CLI/GUI）** | `crates/engine/src/hub.rs`、`crates/paths/src/lib.rs::hub_cache_dir` | 36 条 + 1 条 `#[ignore]`：URL 归一化、分页游标原样回传、ETag/304、新鲜期缓存、5xx/断网回退、4xx 不回退、响应上限、坏 slug/版本不发请求、knowledge/skills 截断、`model`/`modelHint` 兼容、skill 详情与安全路径、本机回环验证生产 `ureq_fetch`。**真机探测**：`https://n.kkpt.tech:8443` 的列表/详情/304/404/400 形状已核对 |
-| **Hub 导入（expert → 人设 + 关联技能）** | `crates/engine/src/hub_import.rs`、`commands_hub.rs` | `hub_import::tests::*`（9 条 + 1 条真机 `#[ignore]`：导入、dry-run、identical、覆盖、未校验拒绝、关闭 knowledge、`--as`、技能上限与筛选、front-matter 标量；**真机**：对 `n.kkpt.tech` 实际导入并落技能）；`commands_hub::tests::*`（7 条参数校验）。只写本地人设/技能，不自动 apply |
-| **Hub 技能落盘（安装 / 更新 / 移除）** | `crates/engine/src/hub_skills.rs`、`crates/paths/src/lib.rs::skills_dir` | `hub_skills::tests::*`（9 条：清单、幂等、版本更新清旧文件、无清单不覆盖、dry-run、路径穿越、只删自己的文件、无清单拒绝移除、坏清单拒绝） |
+| **远端 Hub 客户端（已接 CLI）** | `crates/engine/src/hub.rs`、`crates/paths/src/lib.rs::hub_cache_dir` | 36 条 + 1 条 `#[ignore]`：URL 归一化、分页游标原样回传、ETag/304、新鲜期缓存、5xx/断网回退、4xx 不回退、响应上限、坏 slug/版本不发请求、knowledge/skills 截断、`model`/`modelHint` 兼容、skill 详情与安全路径、本机回环验证生产 `ureq_fetch`。**真机探测**：`https://n.kkpt.tech:8443` 的列表/详情/304/404/400 形状已核对 |
+| **Hub 导入（expert → 人设 + 关联技能）** | `crates/engine/src/hub_import.rs`、`commands_hub.rs` | `hub_import::tests::*`（9 条 + 1 条真机 `#[ignore]`：导入、dry-run、identical、覆盖、未校验拒绝、关闭 knowledge、`--as`、技能上限与筛选、front-matter 标量；**真机**：对 `n.kkpt.tech` 实际导入并落技能）；`commands_hub::tests::*`（10 条：list/show/import/skill 的参数与坏输入）。只写本地人设/技能，不自动 apply |
+| **Hub 技能落盘（安装 / 更新 / 移除）** | `crates/engine/src/hub_skills.rs`、`crates/paths/src/lib.rs::skills_dir` | `hub_skills::tests::*`（10 条：清单、幂等、版本更新清旧文件、无清单不覆盖、dry-run、路径穿越、只删自己的文件、无清单拒绝移除、坏清单拒绝、Windows 路径分隔符） |
+| **Hub CLI（`hub list\|show\|import\|skill`）** | `apps/metis/src/main.rs`、`crates/engine/src/commands_hub.rs` | `apps/metis/tests/cli.rs` 新增 2 条（帮助列出四个子命令、坏 URL/provider/slug/skills 不联网）；`commands_hub::tests::*` 新增 3 条（provider、limit、show slug）。**真机**：`list` / `show` / `import`（1 expert + 3 skill）/ `skill remove` 全跑通 |
 | **CLI 补齐（4 条）** | `apps/metis/src/main.rs` | 10 条 e2e：`use` 无 id 打印/列例外、`sync` 不改人设、`install` 只开一条通道、`install nope` 退出 2、`slash status/on/off` 往返 |
 | **`project` 通道 CLI**（登记 / 摘除 / 列出，摘除先撤盘） | `crates/engine/src/commands_project.rs` | `commands_project::tests::*`（8 条，含 `remove_takes_the_block_off_disk`、`list_flags_a_directory_that_was_deleted`）。**真机端到端验证**：add → apply 写入 `<!-- metis:begin -->` 块 → remove 后标记消失 |
 | **slash golden 测试** | `crates/channel/src/slash.rs`（`golden_tests`） | 5 份 golden（extension / opencode v1 / v2 / dsh-plugin / runtime）；**实测改模板会让它变红**；`cargo xtask golden` 重建 |
@@ -67,7 +68,7 @@
 | **探测 `doctor`**（装没装、版本、主目录、标记文件、可用通道） | `crates/harness/src/detect.rs` + `crates/engine/src/commands_probe.rs` | `detect::tests::*`（13 个）、`doctor_reports_every_harness`、CLI 端到端 2 个 |
 | **启动 `launch`**（15 家的参数形状、默认 dry-run、人设脱敏） | `crates/harness/src/launch_spec.rs` | `launch_spec::tests::*`（22 个）、`launch_preview_redacts_the_persona_body`、CLI 端到端 4 个 |
 | **一次性问答 `ask`**（12 家有参数形状，其余明确拒绝） | `crates/harness/src/launch_spec.rs::oneshot` | `oneshot_covers_the_known_harnesses_and_refuses_the_rest`、`ask_refuses_a_harness_without_a_oneshot_mode` |
-| CLI：`status`/`ls`/`use`/`mode`/`pause`/`resume`/`arm`/`disarm`/`apply`/`persona`/`rm`/`harnesses`/`doctor`/`launch`/`ask` | `apps/metis/src/main.rs` | `apps/metis/tests/cli.rs`（**22 个端到端用例**） |
+| CLI：`status`/`ls`/`use`/`mode`/`pause`/`resume`/`arm`/`disarm`/`apply`/`persona`/`rm`/`harnesses`/`doctor`/`launch`/`ask`/`hub` | `apps/metis/src/main.rs` | `apps/metis/tests/cli.rs`（**34 个端到端用例**，含 hub 帮助与坏输入） |
 | 退出码约定（0 成功 / 1 运行失败 / 2 调用方传错） | `apps/metis/src/main.rs::exit_code_for` | `using_a_missing_persona_fails_with_code_2` 等 |
 | 桌面 GUI（4 个屏幕 + 主题 token + **系统 CJK 字体** + 后台任务表） | `crates/ui-egui/src/*.rs`、`apps/metis-gui/src/main.rs` | `screens::tests::*`（5 个无头渲染）、`app::tests::*`（7 个）、`cjk_font_is_installed_on_this_machine`。**已在真机开窗并截图确认渲染** |
 | 工程门禁：`layers` / `docs` / `secrets` / `pending` / `ci` / `version` / `coverage` | `xtask/src/main.rs`、`xtask/src/layers.rs` | `xtask` 的 12 个自检用例（含"未注册 crate 必须失败"） |
@@ -90,7 +91,7 @@
 |---|---|---|
 
 | 人设导入（本地目录 / GitHub `owner/repo`） | M2.2 | 未做（`import-agent-purge` 已能导入，但没有通用的"从目录/GitHub 拉人设"） |
-| 远端 Hub 的 CLI 与 GUI | M10.3–M10.4 | engine 的导入/技能命令已就绪；CLI 子命令与界面未接 |
+| 远端 Hub 的 GUI | M10.4 | engine 与 CLI 已就绪；界面未接 |
 
 | GUI 的诊断屏真实内容、导入/更新对话框、i18n | M6.3–M6.8 | 部分：4 个屏幕能渲染，但诊断屏只显示路径与一个按钮 |
 | GUI 的更新对话框 | M6.7 | 未做（`clean` / `import` / `verify` 的按钮已接上） |
@@ -136,4 +137,4 @@ CLI 已覆盖选/用/装/看/维护五组命令；仍缺 `armor` / `update` / `p
 
 ## 下一步
 
-按 `docs/ROADMAP.md`：M10.3（`metis hub list|show|import|skill` 的 CLI）→ M10.4（GUI 远端库卡片、分页、详情、技能勾选、未校验二次确认）。
+按 `docs/ROADMAP.md`：M10.4（GUI 远端库卡片、分页、详情、技能勾选、未校验二次确认）。

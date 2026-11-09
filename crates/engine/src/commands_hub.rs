@@ -10,9 +10,69 @@ use metis_core::{ErrorKind, MetisError, Result};
 
 use crate::Engine;
 use crate::command::{Command, CommandOutput, Effects, required_str};
-use crate::hub::{HUB_DEFAULT_URL, HubClient, parse_hub_url, ureq_fetch};
+use crate::hub::{HUB_DEFAULT_URL, HubClient, HubKind, HubProvider, HubQuery, parse_hub_url, ureq_fetch};
 use crate::hub_import::{HubImportOptions, SkillSelection, import_expert};
 use crate::hub_skills::{SkillInstallOptions, install_skill, remove_skill};
+
+/// 列出远端 Hub 的 expert（分页）。
+#[derive(Debug)]
+pub struct HubList;
+
+impl Command for HubList {
+    fn id(&self) -> &'static str {
+        "metis.hub-list"
+    }
+    fn title(&self) -> &'static str {
+        "metis.hub-list.title"
+    }
+    fn effects(&self) -> Effects {
+        Effects { writes_disk: true, spawns_process: false, network: true }
+    }
+    fn run(&self, engine: &Engine, params: &Value) -> Result<CommandOutput> {
+        let base = resolve_hub_url(params)?;
+        let provider = match string_param(params, "provider")? {
+            Some(value) => Some(parse_provider(&value)?),
+            None => None,
+        };
+        let query = HubQuery {
+            kind: Some(HubKind::Expert),
+            q: string_param(params, "query")?,
+            tag: string_param(params, "tag")?,
+            provider,
+            cursor: string_param(params, "cursor")?,
+            limit: usize_param(params, "limit", 20)?,
+            refresh: bool_param(params, "refresh", false)?,
+        };
+        let client = HubClient::new(base, Some(engine.paths().hub_cache_dir()), ureq_fetch);
+        let page = client.list(&query)?;
+        Ok(CommandOutput::Json(serde_json::to_value(&page).unwrap_or(Value::Null)))
+    }
+}
+
+/// 查看远端 Hub 一个 expert 的完整详情。
+#[derive(Debug)]
+pub struct HubShow;
+
+impl Command for HubShow {
+    fn id(&self) -> &'static str {
+        "metis.hub-show"
+    }
+    fn title(&self) -> &'static str {
+        "metis.hub-show.title"
+    }
+    fn effects(&self) -> Effects {
+        Effects { writes_disk: true, spawns_process: false, network: true }
+    }
+    fn run(&self, engine: &Engine, params: &Value) -> Result<CommandOutput> {
+        let base = resolve_hub_url(params)?;
+        let slug = required_str(params, "slug")?;
+        let version = string_param(params, "version")?;
+        let refresh = bool_param(params, "refresh", false)?;
+        let client = HubClient::new(base, Some(engine.paths().hub_cache_dir()), ureq_fetch);
+        let detail = client.show_expert(&slug, version.as_deref(), refresh)?;
+        Ok(CommandOutput::Json(serde_json::to_value(&detail).unwrap_or(Value::Null)))
+    }
+}
 
 /// 从远端 Hub 导入一个 expert。
 #[derive(Debug)]
@@ -125,6 +185,26 @@ fn bool_param(params: &Value, key: &str, default: bool) -> Result<bool> {
     }
 }
 
+fn usize_param(params: &Value, key: &str, default: usize) -> Result<usize> {
+    match params.get(key) {
+        None | Some(Value::Null) => Ok(default),
+        Some(Value::Number(value)) => value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| MetisError::new(ErrorKind::InvalidArgument, format!("参数 {key} 必须是非负整数")).with_remediation("例如 20")),
+        Some(_) => Err(MetisError::new(ErrorKind::InvalidArgument, format!("参数 {key} 必须是非负整数")).with_remediation("例如 20")),
+    }
+}
+
+fn parse_provider(value: &str) -> Result<HubProvider> {
+    match value {
+        "claude" => Ok(HubProvider::Claude),
+        "codex" => Ok(HubProvider::Codex),
+        "deepseek" => Ok(HubProvider::Deepseek),
+        other => Err(MetisError::new(ErrorKind::InvalidArgument, format!("未知 provider：{other}")).with_remediation("可用：claude / codex / deepseek")),
+    }
+}
+
 fn skill_selection(value: Option<&Value>) -> Result<SkillSelection> {
     match value {
         None | Some(Value::Null) => Ok(SkillSelection::All),
@@ -175,6 +255,34 @@ mod tests {
         let (_dir, engine) = engine();
         for bad in ["http://example.com", "https://example.com/path", "nope"] {
             let error = HubImport.run(&engine, &json!({ "url": bad, "slug": "security-reviewer" })).expect_err(bad);
+            assert_eq!(error.kind(), ErrorKind::InvalidArgument, "{bad}");
+            let error = HubList.run(&engine, &json!({ "url": bad })).expect_err(bad);
+            assert_eq!(error.kind(), ErrorKind::InvalidArgument, "{bad}");
+        }
+    }
+
+    #[test]
+    fn hub_list_rejects_a_bad_provider_before_network() {
+        let (_dir, engine) = engine();
+        let error = HubList.run(&engine, &json!({ "url": "https://n.kkpt.tech:8443", "provider": "nope" })).expect_err("must fail");
+        assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+        assert!(error.remediation().unwrap_or_default().contains("claude"));
+    }
+
+    #[test]
+    fn hub_list_rejects_a_non_numeric_limit_before_network() {
+        let (_dir, engine) = engine();
+        for limit in [json!("20"), json!(-1), json!(1.5)] {
+            let error = HubList.run(&engine, &json!({ "url": "https://n.kkpt.tech:8443", "limit": limit })).expect_err("must fail");
+            assert_eq!(error.kind(), ErrorKind::InvalidArgument, "{limit}");
+        }
+    }
+
+    #[test]
+    fn hub_show_rejects_a_bad_slug_before_network() {
+        let (_dir, engine) = engine();
+        for bad in ["", "../x", "A", "a/b"] {
+            let error = HubShow.run(&engine, &json!({ "url": "https://n.kkpt.tech:8443", "slug": bad })).expect_err(bad);
             assert_eq!(error.kind(), ErrorKind::InvalidArgument, "{bad}");
         }
     }

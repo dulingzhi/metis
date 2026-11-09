@@ -82,6 +82,17 @@ metis ls                                # 看看有哪些
 metis use concise                       # 用其中一份
 ```
 
+也可以直接浏览远端人设库（worldd / KK Hub）：
+
+```sh
+metis hub list                          # 分页浏览 expert
+metis hub show expert/<slug>            # 看详情（prompt、knowledge、关联技能）
+metis hub import expert/<slug>          # 导入人设；关联 skill 落到 ~/.metis/skills/
+```
+
+`metis hub` 默认指向内置的公开 Hub；用 `--url` 或 `METIS_HUB_URL` 可以换成自建 worldd。
+导入只写本地人设与技能目录，**不会自动 apply**。
+
 图形界面：
 
 ```sh
@@ -178,6 +189,7 @@ order: 10
 | `metis persona <id> --body "..."` | 新建或修改 |
 | `metis rm <id>` | 删除 |
 | `metis import <目录\|owner/repo>` | 从本地或 GitHub 导入 |
+| `metis hub list\|show\|import` | 浏览远端 Hub、看详情、导入（含关联技能） |
 | `metis use` | 不带参数：打印当前人设与全部分家例外 |
 
 ### 验证与维护
@@ -266,7 +278,7 @@ metis self-uninstall     # 撤接管 + 删除数据目录（不可逆）
 
 | 项目 | 做法 |
 |---|---|
-| **不联网** | 只有 `metis import owner/repo` 与 `metis update` 会访问网络，且都可预期 |
+| **不联网** | 只有 `metis import owner/repo`、`metis hub` 与 `metis update` 会访问网络，且都可预期；`metis hub` 只读公开数据，不发送遥测 |
 | **不上传** | 没有遥测、没有统计、没有「匿名使用数据」 |
 | **不接管宿主** | 不 hook 进程、不代理 API、不注入内存 |
 | **可撤销** | 每次写盘前记录原始字节；撤回逐字节还原 |

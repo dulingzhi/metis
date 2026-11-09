@@ -39,5 +39,7 @@ config.sync.title	Sync targets
 channel.install.title	Enable resident channel
 channel.slash.title	Manage the /purge extension
 metis.hub-import.title	Import a persona from the remote Hub
+metis.hub-list.title	Browse the remote Hub
+metis.hub-show.title	Show a remote Hub persona
 metis.hub-skill-install.title	Install a Hub skill
 metis.hub-skill-remove.title	Remove an installed Hub skill

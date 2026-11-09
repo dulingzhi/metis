@@ -416,3 +416,50 @@ fn slash_rejects_an_unknown_action_with_code_2() {
     let err = stderr_of(&output);
     assert!(err.contains("status") && err.contains("on") && err.contains("off"), "补救建议应列出可用动作：{err}");
 }
+
+#[test]
+fn hub_help_lists_every_subcommand() {
+    let home = temp_home();
+    let output = metis(home.path(), &["hub", "--help"]);
+    assert!(output.status.success(), "{}", stderr_of(&output));
+    let text = stdout_of(&output);
+    for sub in ["list", "show", "import", "skill"] {
+        assert!(text.contains(sub), "hub 帮助里缺少 {sub}：{text}");
+    }
+}
+
+#[test]
+fn hub_subcommands_reject_bad_input_before_network() {
+    let home = temp_home();
+
+    // 坏 URL：本地就拒绝，不发请求。
+    let list = metis(home.path(), &["hub", "list", "--url", "http://example.com"]);
+    assert_eq!(list.status.code(), Some(2), "{}", stderr_of(&list));
+
+    // 坏 provider / limit：参数或引擎校验拒绝。
+    let provider = metis(home.path(), &["hub", "list", "--provider", "nope", "--url", "https://n.kkpt.tech:8443"]);
+    assert_eq!(provider.status.code(), Some(2), "{}", stderr_of(&provider));
+    let limit = metis(home.path(), &["hub", "list", "--limit", "abc"]);
+    assert_eq!(limit.status.code(), Some(2), "{}", stderr_of(&limit));
+
+    // 坏 slug：`show_expert` 在发请求之前校验。
+    let show = metis(home.path(), &["hub", "show", "../x", "--url", "https://n.kkpt.tech:8443"]);
+    assert_eq!(show.status.code(), Some(2), "{}", stderr_of(&show));
+
+    // 目前只支持 expert。
+    let import = metis(home.path(), &["hub", "import", "skill/foo", "--url", "https://n.kkpt.tech:8443"]);
+    assert_eq!(import.status.code(), Some(2), "{}", stderr_of(&import));
+    assert!(stderr_of(&import).contains("expert"), "{}", stderr_of(&import));
+
+    // 空的 skills 列表在本地拒绝。
+    let skills = metis(home.path(), &["hub", "import", "expert/foo", "--skills", ",,", "--url", "https://n.kkpt.tech:8443"]);
+    assert_eq!(skills.status.code(), Some(2), "{}", stderr_of(&skills));
+
+    // 移除时坏 slug 不碰磁盘。
+    let remove = metis(home.path(), &["hub", "skill", "remove", "../x"]);
+    assert_eq!(remove.status.code(), Some(2), "{}", stderr_of(&remove));
+
+    // 安装时坏 URL 不碰磁盘。
+    let install = metis(home.path(), &["hub", "skill", "install", "wb-apiz", "--url", "http://example.com"]);
+    assert_eq!(install.status.code(), Some(2), "{}", stderr_of(&install));
+}

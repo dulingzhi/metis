@@ -252,6 +252,12 @@ pub enum Command {
         #[arg(long)]
         dry_run: bool,
     },
+    /// 远端人设库（worldd / KK Hub）。
+    Hub {
+        /// 子动作：list / show / import / skill。
+        #[command(subcommand)]
+        action: HubAction,
+    },
     /// 新建或修改一份人设。
     Persona {
         /// 人设 id。
@@ -270,6 +276,120 @@ pub enum Command {
     Rm {
         /// 人设 id。
         id: String,
+    },
+}
+
+/// `metis hub` 的子动作。
+#[derive(Debug, Subcommand)]
+pub enum HubAction {
+    /// 列出远端 expert（分页）。
+    List {
+        /// 搜索词（匹配名称/说明/标签）。
+        #[arg(long, value_name = "TEXT")]
+        query: Option<String>,
+        /// 标签过滤。
+        #[arg(long)]
+        tag: Option<String>,
+        /// provider：claude / codex / deepseek。
+        #[arg(long, value_name = "NAME")]
+        provider: Option<String>,
+        /// 不透明游标（上一页返回的 nextCursor）。
+        #[arg(long)]
+        cursor: Option<String>,
+        /// 每页条数（默认 20，最大 100）。
+        #[arg(long, default_value = "20")]
+        limit: usize,
+        /// 绕过缓存新鲜期。
+        #[arg(long)]
+        refresh: bool,
+        /// Hub 地址（默认 METIS_HUB_URL 或内置）。
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+    },
+    /// 查看一个 expert 的完整详情。
+    Show {
+        /// `expert/<slug>` 或 `<slug>`。
+        target: String,
+        /// 版本（默认当前 approved）。
+        #[arg(long)]
+        version: Option<String>,
+        /// 绕过缓存新鲜期。
+        #[arg(long)]
+        refresh: bool,
+        /// Hub 地址（默认 METIS_HUB_URL 或内置）。
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+    },
+    /// 导入一个 expert，并按需安装关联技能。
+    Import {
+        /// `expert/<slug>` 或 `<slug>`。
+        target: String,
+        /// 版本（默认当前 approved）。
+        #[arg(long)]
+        version: Option<String>,
+        /// 人设 id（默认 Hub slug）。
+        #[arg(long = "as", value_name = "ID")]
+        as_id: Option<String>,
+        /// 覆盖同名的人设。
+        #[arg(long)]
+        overwrite: bool,
+        /// 只预览，不写盘。
+        #[arg(long)]
+        dry_run: bool,
+        /// 不把 knowledge 追加到正文。
+        #[arg(long)]
+        no_knowledge: bool,
+        /// 关联技能：all / none / slug,slug。
+        #[arg(long, default_value = "all")]
+        skills: String,
+        /// 允许导入 verified=false 的条目。
+        #[arg(long)]
+        allow_unverified: bool,
+        /// 绕过缓存新鲜期。
+        #[arg(long)]
+        refresh: bool,
+        /// Hub 地址（默认 METIS_HUB_URL 或内置）。
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+    },
+    /// 单独管理已安装的 skill。
+    Skill {
+        /// 子动作：install / remove。
+        #[command(subcommand)]
+        action: HubSkillAction,
+    },
+}
+
+/// `metis hub skill` 的子动作。
+#[derive(Debug, Subcommand)]
+pub enum HubSkillAction {
+    /// 安装一个 skill。
+    Install {
+        /// skill slug。
+        slug: String,
+        /// 版本（默认当前 approved）。
+        #[arg(long)]
+        version: Option<String>,
+        /// 覆盖已有安装（包括没有清单的目录）。
+        #[arg(long)]
+        overwrite: bool,
+        /// 只预览，不写盘。
+        #[arg(long)]
+        dry_run: bool,
+        /// 允许安装 verified=false 的条目。
+        #[arg(long)]
+        allow_unverified: bool,
+        /// 绕过缓存新鲜期。
+        #[arg(long)]
+        refresh: bool,
+        /// Hub 地址（默认 METIS_HUB_URL 或内置）。
+        #[arg(long, value_name = "URL")]
+        url: Option<String>,
+    },
+    /// 移除一个由 Metis 安装的 skill（只删清单里的文件）。
+    Remove {
+        /// skill slug。
+        slug: String,
     },
 }
 
@@ -354,6 +474,7 @@ fn print_help() {
     println!("  metis status            查看当前配置");
     println!("  metis harnesses         查看本机可接管的执行器");
     println!("  metis ls                列出人设");
+    println!("  metis hub list|show|import  远端人设库（worldd / KK Hub）");
     println!("  metis use <id>          换人设");
     println!("  metis mode <m>          换模式（replace / strict / append / off）");
     println!("  metis arm <harness>     开启通道");
@@ -491,6 +612,7 @@ fn translate(command: Command) -> metis_core::Result<(&'static str, serde_json::
             }
             ("metis.import-agent-purge", params)
         }
+        Command::Hub { action } => return translate_hub(action),
         Command::Persona { id, body, name, description } => {
             let body = match body {
                 Some(body) => body,
@@ -518,6 +640,96 @@ fn translate(command: Command) -> metis_core::Result<(&'static str, serde_json::
         }
         Command::Rm { id } => ("persona.remove", json!({ "persona": id })),
     })
+}
+
+fn translate_hub(action: HubAction) -> metis_core::Result<(&'static str, serde_json::Value)> {
+    use serde_json::json;
+    Ok(match action {
+        HubAction::List { query, tag, provider, cursor, limit, refresh, url } => {
+            let mut params = json!({ "limit": limit, "refresh": refresh });
+            insert_optional(&mut params, "query", query);
+            insert_optional(&mut params, "tag", tag);
+            insert_optional(&mut params, "provider", provider);
+            insert_optional(&mut params, "cursor", cursor);
+            insert_optional(&mut params, "url", url);
+            ("metis.hub-list", params)
+        }
+        HubAction::Show { target, version, refresh, url } => {
+            let slug = parse_expert_target(&target)?;
+            let mut params = json!({ "slug": slug, "refresh": refresh });
+            insert_optional(&mut params, "version", version);
+            insert_optional(&mut params, "url", url);
+            ("metis.hub-show", params)
+        }
+        HubAction::Import { target, version, as_id, overwrite, dry_run, no_knowledge, skills, allow_unverified, refresh, url } => {
+            let slug = parse_expert_target(&target)?;
+            let skills = parse_skills_arg(&skills)?;
+            let mut params = json!({
+                "slug": slug,
+                "overwrite": overwrite,
+                "dryRun": dry_run,
+                "includeKnowledge": !no_knowledge,
+                "skills": skills,
+                "allowUnverified": allow_unverified,
+                "refresh": refresh,
+            });
+            insert_optional(&mut params, "version", version);
+            insert_optional(&mut params, "as", as_id);
+            insert_optional(&mut params, "url", url);
+            ("metis.hub-import", params)
+        }
+        HubAction::Skill { action } => match action {
+            HubSkillAction::Install { slug, version, overwrite, dry_run, allow_unverified, refresh, url } => {
+                let mut params = json!({ "slug": slug, "overwrite": overwrite, "dryRun": dry_run, "allowUnverified": allow_unverified, "refresh": refresh });
+                insert_optional(&mut params, "version", version);
+                insert_optional(&mut params, "url", url);
+                ("metis.hub-skill-install", params)
+            }
+            HubSkillAction::Remove { slug } => ("metis.hub-skill-remove", json!({ "slug": slug })),
+        },
+    })
+}
+
+/// `expert/<slug>` 或 `<slug>`；目前只支持 expert。
+fn parse_expert_target(target: &str) -> metis_core::Result<String> {
+    let target = target.trim();
+    let (kind, slug) = match target.split_once('/') {
+        Some((kind, slug)) => (Some(kind), slug),
+        None => (None, target),
+    };
+    if let Some(kind) = kind
+        && kind != "expert"
+    {
+        return Err(metis_core::MetisError::new(metis_core::ErrorKind::InvalidArgument, format!("目前只支持 expert 目标：{target}"))
+            .with_remediation("用 `expert/<slug>` 或直接写 `<slug>`"));
+    }
+    if slug.trim().is_empty() {
+        return Err(metis_core::MetisError::new(metis_core::ErrorKind::InvalidArgument, format!("缺少 slug：{target}"))
+            .with_remediation("例如 `expert/security-reviewer`"));
+    }
+    Ok(slug.trim().to_owned())
+}
+
+fn parse_skills_arg(value: &str) -> metis_core::Result<serde_json::Value> {
+    use serde_json::json;
+    match value.trim() {
+        "all" => Ok(json!("all")),
+        "none" => Ok(json!("none")),
+        other => {
+            let slugs: Vec<&str> = other.split(',').map(str::trim).filter(|slug| !slug.is_empty()).collect();
+            if slugs.is_empty() {
+                return Err(metis_core::MetisError::new(metis_core::ErrorKind::InvalidArgument, "skills 至少要给一个 slug，或写 all / none")
+                    .with_remediation("例如 `--skills wb-apiz,wb-claude-agent-sdk`"));
+            }
+            Ok(json!(slugs))
+        }
+    }
+}
+
+fn insert_optional(params: &mut serde_json::Value, key: &str, value: Option<String>) {
+    if let Some(value) = value {
+        params[key] = serde_json::Value::String(value);
+    }
 }
 
 /// 真正需要 engine 的早退分支（必须在拿到 engine 之后判断）。
