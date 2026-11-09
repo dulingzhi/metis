@@ -22,3 +22,11 @@
 
 # 打包产物
 /dist/
+# 开发调试截图（真机验证的中间产物，不进版本库）
+# 提交前先看清楚：只有 `crates/ui-egui/tests/snapshots/` 下的才是基线，必须保留。
+/*.png
+/*.jpg
+/*.jpeg
+/*.webp
+/ui-*.png
+/ui-*.jpg
