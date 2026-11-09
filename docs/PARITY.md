@@ -249,3 +249,12 @@
 - 只测了磁盘、没测真机：明确写"仅磁盘"，并在 `STATUS.md` 的"未验证"里列一行。
 - 真机验证过：写清时间、harness 版本、看到的证据（抓到的角色与命中）。
 - **不允许**把"代码看起来对"当证据。
+
+## 10. Metis 独有扩展（不属于 agent-purge 基线）
+
+这些能力没有对应的上游行为，不参与"已对齐 / 未做"的统计：
+
+| 扩展 | 行为 | 证据 |
+|---|---|---|
+| 远端 Hub 浏览 / 导入（worldd / KK Hub） | `metis hub list\|show\|import\|skill`；GUI 人设库屏的远端库卡片；导入只写本地人设与 `~/.metis/skills/<slug>/`，**不自动 apply**；未校验条目必须二次确认 | `hub::tests::*`、`hub_import::tests::*`、`hub_skills::tests::*`、`commands_hub::tests::*`、`apps/metis/tests/cli.rs`、UI 无头测试 + 2026-11-09 真机（见 `STATUS.md`、`TESTING.md`） |
+| 远端来源与技能清单 | front-matter `hub-*`；`.metis-hub.json` 是技能目录的唯一归属凭据 | `DATA-FORMAT.md` §12–13；`PITFALLS.md` G80–G86 |

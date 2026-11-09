@@ -4,7 +4,7 @@
 > 每条"能做什么"必须能指出**代码位置**与**测试名**；指不出来就写"未实现"。
 > 不允许把计划写成已完成。
 
-最后更新：M0–M10 的主要闭环已落地（见下）；M10.1–M10.4 的 Hub 客户端、导入、技能落盘、CLI 与 GUI 已有代码与测试。
+最后更新：M0–M10 全部收尾；远端 Hub 的客户端、导入、技能、CLI 与 GUI 均有代码与测试，2026-11-09 真机验证通过。
 
 ## 一句话
 
@@ -86,17 +86,23 @@
 - `metis doctor --no-version` → 本机 15 家里识别出 12 家"配置目录存在"，其中 `codex`/`claude` 找到了可执行文件、
   `workbuddy`/`zcode` 正确标记为"只有桌面版"；其余 5 家报"配置目录在，但 PATH 里找不到命令"（已核实确实不在 PATH）。
 
+## 远端 Hub 真机记录（2026-11-09）
+
+- 对端：`https://n.kkpt.tech:8443`（`/hub` 是网页，API 在 origin 的 `/v1/hub/*`）
+- 协议：列表 `{items,nextCursor}`、详情 `content`、`304`/`404`/`400` 形状已核对；
+  客户端固定 `Accept-Encoding: identity`，避免 zstd 与两套 ETag
+- CLI：`hub list` → `hub show` → `hub import`（1 expert + 3 skills）→ `hub skill install` → `hub skill remove`
+  全部通过；所有写操作都在临时 `METIS_HOME`
+- GUI：agent-desktop 真实窗口，人设库屏 → 加载远端库 → 列表 → `详情：<名称>` → 详情卡片
+- 未发送遥测；未调用 `POST .../download`
+
 ## 未实现
 
 | 能力 | 路线图 | 现状 |
 |---|---|---|
-
-| 人设导入（本地目录 / GitHub `owner/repo`） | M2.2 | 未做（`import-agent-purge` 已能导入，但没有通用的"从目录/GitHub 拉人设"） |
-
-| GUI 的诊断屏真实内容、导入/更新对话框、i18n | M6.3–M6.8 | 部分：4 个屏幕能渲染，但诊断屏只显示路径与一个按钮 |
 | GUI 的更新对话框 | M6.7 | 未做（`clean` / `import` / `verify` 的按钮已接上） |
-| 打包、安装器、发布 | M7 | 未做 |
-| 深色主题、快照测试、键盘快捷键 | M8、M6.10 | 未做 |
+| 安装器 | M7.2 | 未做（便携包已发布） |
+
 
 ## 未验证（诚实清单）
 
@@ -117,7 +123,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo xtask layers               # 分层与外部进程入口检查
 cargo xtask docs                 # 文档一致性
 cargo xtask secrets              # 密钥与本机路径检查
-cargo xtask pending              # 路线图未完成项（当前 71 条）
+cargo xtask pending              # 路线图未完成项（当前 0 条）
 cargo xtask ci                   # 本地干跑 CI
 
 # CLI（用 METIS_HOME 隔离，不碰真实数据目录）
@@ -128,13 +134,17 @@ cargo run -p metis -- use concise
 cargo run -p metis -- arm codex --channel install
 cargo run -p metis -- apply
 cargo run -p metis -- pause
+cargo run -p metis -- hub list
+cargo run -p metis -- hub show expert/<slug>
+cargo run -p metis -- hub import expert/<slug> --dry-run
 ```
 
 ## 与基线的对齐进度
 
-`docs/PARITY.md` 是唯一进度表。当前：状态字段与激活语义**已对齐**；四条通道里三条落地、
-CLI 已覆盖选/用/装/看/维护五组命令；仍缺 `armor` / `update` / `pull`。
+`docs/PARITY.md` 是唯一进度表。当前：状态字段与激活语义**已对齐**；四条通道全部落地；
+CLI 已覆盖选/用/装/看/维护五组命令；`armor` / `update` 已落地，`pull` 按 PARITY 决策 1 不提供。
+远端 Hub（worldd / KK Hub）是 Metis 独有扩展，不属于 agent-purge 基线（见 `PARITY.md` §10）。
 
 ## 下一步
 
-按 `docs/ROADMAP.md`：M10.5（文档审计、README/PARITY 收尾、真实 worldd 调用记录归档）。
+M10 已收尾，当前 `docs/ROADMAP.md` 没有未完成项。下一项从路线图重新认领。
