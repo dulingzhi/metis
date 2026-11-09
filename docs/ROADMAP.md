@@ -148,6 +148,17 @@ M0 阶段：**只有文档**。任何"已实现"的说法都必须能在 `STATUS
 - [x] M8.4 错误文案统一：每个面向用户的错误都有补救建议，由 `cargo xtask remediation` 强制（`Internal` 豁免）
 - [x] M8.5 备份目录体积管理：`backups usage` / `backups prune` + 关于屏三个按钮（默认预览，`--yes` 才删）
 
+## M10 远端人设库（worldd / KK Hub） — owner: maintainers
+
+> 对端：`https://n.kkpt.tech:8443`（`/hub` 是网页；API 在 origin 的 `/v1/hub/*`）。
+> 契约：worldd 的 `/v1/hub/*`（参考项目 habblaud 的 `docs/world/hub-api.md`）。
+
+- [x] M10.1 Hub 客户端：列表分页（cursor/limit）、详情、ETag 缓存、注入式网络、URL 校验（依赖 M2.1）。31 条单测 + 1 条 `#[ignore]` 真机；2026-11-09 对 `https://n.kkpt.tech:8443` 实测通过
+- [ ] M10.2 Hub 导入：expert → 人设映射、provenance front-matter、关联 skill 落到本地并写回路径、去重/覆盖、dry-run（依赖 M10.1、M2.2）
+- [ ] M10.3 CLI：`metis hub list|show|import|skill`（依赖 M10.2）
+- [ ] M10.4 GUI：远端库卡片、分页（上一页 + 页码）、详情面板、skill 勾选、未校验二次确认（依赖 M10.1、M6.6）
+- [ ] M10.5 文档与真机验证：DATA-FORMAT、STATUS、PITFALLS、真实 worldd 调用记录（依赖 M10.4）
+
 ---
 
 ## 未完成项汇总

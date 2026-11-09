@@ -30,6 +30,8 @@
     latest.json               最近一次真机抓包验证报告
   armor/
     <timestamp>.json          测量矩阵快照
+  hub-cache/
+    <sha256>.json             远端 Hub 的 ETag 缓存（可随时删除）
   journal/
     <yyyy-mm>.jsonl           追加式变更日志（Metis 新增，见 §8）
   shim/                       裸命令接管的包装脚本目录
@@ -299,3 +301,28 @@ Metis 新增（基线没有独立的追加式变更日志）。每行一个 JSON
 - 每个迁移都有"跑两次"的幂等测试。
 - 损坏输入（截断 JSON、错误类型、非法 id、超长正文、BOM/CRLF）各有一条测试，断言原文件字节不变。
 - 路径大小写：Windows 下 `C:\A\b.toml` 与 `c:\a\B.TOML` 必须判定为同一位置。
+
+## 12. 远端 Hub 缓存 `hub-cache/<sha256>.json`
+
+远端人设库（worldd / KK Hub）的**只读**缓存。文件名是完整请求 URL 的 sha256（十六进制），
+这样列表的每一页、详情、不同 base URL 天然分开，不需要额外的索引文件。
+
+```json
+{
+  "v": 1,
+  "url": "https://n.kkpt.tech:8443/v1/hub/items?kind=expert&limit=20",
+  "etag": "\"1dd7e2ac…\"",
+  "fetchedAt": 1762000000,
+  "body": "{\"items\":[…],\"nextCursor\":\"20\"}"
+}
+```
+
+规则：
+
+- **可随时删除**：缓存只是省请求与离线回退，不是真相来源；删掉后下次重新拉。
+- 写入原子（`metis_fs::write_atomic`）；读不出来/版本不对/URL 对不上 → 当作没有缓存。
+- `body` 原样保存响应字节（UTF-8 JSON），不做重新序列化。
+- 新鲜期：列表 60 秒、详情 10 分钟；期内直接读缓存，不发请求。
+- 过了新鲜期仍带 `If-None-Match` 条件请求：`304` 沿用缓存；`5xx`/网络失败回退缓存并标
+  “stale”；`4xx` **不回退**（避免把“下架/参数错”伪装成旧数据）。
+- 缓存里不得出现凭据：公开读不需要 token，Metis 也不保存 Hub 密码。

@@ -104,6 +104,13 @@ impl Paths {
         self.personas_dir().join("active.md")
     }
 
+    /// `hub-cache/`：远端 Hub 的 ETag 缓存。
+    ///
+    /// **可随时删除**：它只是离线回退与省请求用的副本，不是真相来源。
+    pub fn hub_cache_dir(&self) -> PathBuf {
+        self.home.join("hub-cache")
+    }
+
     /// `footprints.json`：写入所有权账本。
     pub fn footprints_file(&self) -> PathBuf {
         self.home.join("footprints.json")
@@ -416,6 +423,13 @@ mod tests {
         let paths = Paths::with_home(abs(&["ap"]));
         let id = metis_core::PersonaId::parse("concise").expect("id");
         assert_eq!(paths.persona_file(&id), paths.personas_dir().join("concise.md"));
+    }
+
+    #[test]
+    fn hub_cache_dir_is_under_the_data_home_and_disposable() {
+        let paths = Paths::with_home(abs(&["ap"]));
+        assert_eq!(paths.hub_cache_dir(), paths.home().join("hub-cache"));
+        assert!(!paths.hub_cache_dir().starts_with(paths.personas_dir()), "缓存不能混进人设目录");
     }
 
     #[test]

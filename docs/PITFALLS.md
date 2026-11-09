@@ -959,3 +959,33 @@
   任何 `Instant::now()` 派生的内容。
   另外：**定位差异区域**（逐像素找出边界框）比盯着两张图看有效得多 ——
   坐标直接告诉你是哪一块在抖。
+
+### G76. Windows 上 `curl` 报 `CRYPT_E_NO_REVOCATION_CHECK`，不代表服务端挂了
+- **现象**：探测 `https://n.kkpt.tech:8443` 时 `curl` 直接 `000`，错误是
+  `schannel: next InitializeSecurityContext failed: CRYPT_E_NO_REVOCATION_CHECK`，
+  看起来像证书/网络故障。
+- **原因**：Windows 的 schannel 在做证书吊销检查，而吊销服务器不可达；这与目标站点是否可用无关。
+- **规则**：遇到这个错误先用 `curl --ssl-no-revoke` 或 `openssl s_client` 复核；
+  两者能通就说明是**本机 TLS 栈**的问题，不是服务端。Rust 的 `ureq`/rustls 默认不做 OCSP，通常不受影响。
+  对应实测：该站点证书由 Let's Encrypt 签发，`--ssl-no-revoke` 下列表/详情均 200。
+
+### G77. Caddy 会按 `Accept-Encoding` 返回 zstd，ETag 也随之变
+- **现象**：同一个 URL，协商到 zstd 时响应带 `content-encoding: zstd`，ETag 是
+  `"<hash>-zstd"`；发 `accept-encoding: identity` 时是明文，ETag 是 `"<hash>"`。
+- **原因**：Caddy 的压缩中间件按内容编码变体生成不同的 ETag；两者不是同一份响应的“同一个版本”。
+- **规则**：**客户端固定发 `Accept-Encoding: identity`**，不做 zstd 解码，ETag 也因此稳定。
+  如果中间代理仍然返回 `content-encoding: zstd`，明确报错而不是把它当 JSON 解析。
+  对应测试：`unexpected_content_encoding_is_reported`、`conditional_request_uses_etag_and_304_returns_cache`。
+
+### G78. worldd 的 Hub API 在 origin，不在 `/hub` 页面下
+- **现象**：用户给的地址是 `https://n.kkpt.tech:8443/hub`；直接拼 `/hub/v1/hub/items` 会 404。
+- **原因**：`/hub` 是网页（`text/html`），API 是 origin 的 `/v1/hub/*`。
+- **规则**：输入归一化时把结尾的 `/hub` 去掉，只保留 scheme + host + port；
+  其他 path 一律拒绝并给出示例。对应测试：`parse_hub_url_accepts_origin_and_hub_page`。
+
+### G79. `nextCursor` 是 offset 且“满页就给”，不能当成“还有更多”
+- **现象**：服务端的实现是 `items.len() == limit` 就返回 `nextCursor = offset + limit`；
+  最后一页正好满时仍会给游标，再翻一页得到空列表。
+- **原因**：把“这一页满了”误当成“后面还有”。
+- **规则**：游标**不透明、不解析**；把空页当作终点，显示“没有更多了”并禁用下一页。
+  offset 分页在两次请求之间有条目更新时会跨页重复/漏项，客户端按 `(kind, slug)` 去重。

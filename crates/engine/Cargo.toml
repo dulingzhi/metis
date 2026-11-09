@@ -25,6 +25,7 @@ time = { workspace = true }
 log = { workspace = true }
 dirs = { workspace = true }
 ureq = { workspace = true }
+url = { workspace = true }
 flate2 = { workspace = true }
 tar = { workspace = true }
 

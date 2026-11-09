@@ -18,6 +18,7 @@ pub mod commands_probe;
 pub mod commands_project;
 pub mod commands_update;
 pub mod commands_verify;
+pub mod hub;
 pub mod import;
 pub mod journal;
 pub mod persona_import;

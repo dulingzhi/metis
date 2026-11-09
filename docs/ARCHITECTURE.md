@@ -64,7 +64,7 @@ flowchart TB
 | `metis-harness` | L1 | 执行器适配：`Harness` trait、探测、能力表、启动参数、静态元数据与落点表 | 不直接写盘 |
 | `metis-channel` | L1 | 四条通道的 `plan / apply / revert / status`，以及宿主侧 JS/TS 产物的生成 | 不决定"该不该做"（由 engine 决定） |
 | `metis-process` | L2 | 外部进程：超时、stdin 策略、输出上限与排空、进程组/Job Object 终止；本地假 provider | 不知道被谁调用 |
-| `metis-engine` | L2 | 命令注册表、`state.json`、激活解析、apply 编排、journal、verification、armor、doctor、update | 不依赖任何 UI 类型 |
+| `metis-engine` | L2 | 命令注册表、`state.json`、激活解析、apply 编排、journal、verification、armor、doctor、update、**远端 Hub 客户端（注入式网络 + ETag 缓存）** | 不依赖任何 UI 类型 |
 | `metis-ui-egui` | L3 | egui 界面：屏幕、组件、主题、后台任务绑定 | 不含业务判定；不直接读写宿主配置 |
 | `metis-testkit` | dev | 临时 home、假 harness 可执行文件、假 provider、golden 比对 | 不进生产二进制 |
 | `apps/metis` | app | CLI：clap 解析 → 命令 id + 参数 → engine | 不实现业务 |
