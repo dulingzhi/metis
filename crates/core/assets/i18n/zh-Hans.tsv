@@ -38,3 +38,6 @@ project.list.title	列出项目目录
 config.sync.title	刷新落点
 channel.install.title	开启常驻通道
 channel.slash.title	管理 /purge 扩展
+metis.hub-import.title	从远端 Hub 导入人设
+metis.hub-skill-install.title	安装 Hub 技能
+metis.hub-skill-remove.title	移除已安装的 Hub 技能

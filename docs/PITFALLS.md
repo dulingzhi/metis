@@ -989,3 +989,34 @@
 - **原因**：把“这一页满了”误当成“后面还有”。
 - **规则**：游标**不透明、不解析**；把空页当作终点，显示“没有更多了”并禁用下一页。
   offset 分页在两次请求之间有条目更新时会跨页重复/漏项，客户端按 `(kind, slug)` 去重。
+
+### G80. 技能目录的归属只能靠 manifest 证明
+- **现象**：如果“目录存在就覆盖/删除”，用户自己放在 `~/.metis/skills/<slug>/` 里的文件会被一起删掉。
+- **原因**：路径存在 ≠ 这个目录归我们所有；远端 slug 也可能和用户手工建的目录撞名。
+- **规则**：`.metis-hub.json` 是**唯一归属凭据**：更新/移除只处理它列出的文件；
+  没有清单的目录**不覆盖、不删除**，安装要 `--overwrite`，移除只报告“没有清单”。
+  目录里剩下的用户文件列进 `leftovers`，不能为了“清干净”把它们删掉。
+  对应测试：`remove_deletes_only_managed_files_and_keeps_user_files`、
+  `remove_without_manifest_refuses`、`a_directory_without_manifest_is_not_overwritten`。
+
+### G81. 落盘路径要逐段校验，不能只做字符白名单
+- **现象**：`references/../SKILL.md`、`C:\x`、`a:b`（NTFS 数据流）、`a\b`（Unix 上只是普通字符）
+  都可能绕过“含 `..` 就拒绝”这种单点检查。
+- **原因**：不同平台对分隔符与盘符的解释不同；字符串比较不等于路径语义。
+- **规则**：用 `std::path::Component` 逐段判定：只接受 `Normal`，拒绝
+  `ParentDir/RootDir/Prefix`；显式拒绝 `\`、`:`、NUL；拒绝覆盖入口 `SKILL.md`
+  与清单 `.metis-hub.json`。对应测试：`safe_skill_path_rejects_traversal_and_reserved_names`。
+
+### G82. front-matter 的 flow 数组写回后会被规范化
+- **现象**：`build_meta` 写 `hub-skills: [a@1.0.0]`，保存后重新读取变成
+  `["a@1.0.0"]`（解析器把它当列表重新渲染），按原字符串比较会误判“内容变了”。
+- **原因**：`metis-persona` 对 `[...]` 会解析成列表，未知键保存的是列表视图的 `raw`。
+- **规则**：跨“写入 → 重读”比较 provenance 时，比较**语义**（是否包含某个值）
+  或直接比 `hub-hash`/`hub-version`，不要比 flow 数组的原始文本。
+  对应测试：`imports_expert_and_installs_linked_skills`（用 `contains` 断言）。
+
+### G83. 详情缓存 10 分钟：改完 Hub 立刻重导会看到旧内容
+- **现象**：同一个 expert 在 Hub 上更新后，紧接着重导，`identical` 而不是 `overwritten`。
+- **原因**：详情缓存的新鲜期是 10 分钟；导入默认走缓存，不重新请求。
+- **规则**：需要拿最新版本时显式 `refresh`（CLI/UI 的“刷新”），或等缓存过期。
+  测试里模拟“Hub 内容变了”必须带 `refresh: true`，否则测的是缓存而不是导入逻辑。

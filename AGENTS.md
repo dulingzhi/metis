@@ -47,6 +47,7 @@ xtask/            cargo xtask：layers | fmt | clippy | test | coverage | secret
    自己写业务逻辑。
 3. **变更必须可逆且可追溯。** 每次写盘前先记录所有权凭据（原始字节 / 哈希 / 我们写入的块标记）；回滚只回滚
    自己写过的字节。**失败不得抹掉恢复材料。** 外部修改一律保留，冲突时明确报错，不静默覆盖。
+   远端安装的目录（`skills/<slug>/`）以清单 `.metis-hub.json` 为**唯一**归属凭据；没有清单的目录一律不覆盖、不删除。
 4. **区分"写入成功"与"运行时生效"。** 报告里两个字段分开：`written`（磁盘）与 `runtimeConfirmed`（本机实测）。
    任何 UI 文案、日志、测试都不得把前者说成后者。
 5. **能力诚实。** 一条通道不能用，就在 UI 与 CLI 里说清**为什么不能用**，不给点了没有反应的开关。
@@ -57,7 +58,8 @@ xtask/            cargo xtask：layers | fmt | clippy | test | coverage | secret
    不把业务规则编码进字符串匹配。
 8. **不联网、不泄密。** 仓库是公开的：禁止 API Key、token、私钥、`.env`、真实个人路径进入代码、测试、日志、
    截图或提交信息，只用明显的假值（`sk-test`、`C:\Users\example`）。`cargo xtask secrets` 检查将要提交的内容。
-   默认不监听端口、不发送遥测。
+   默认不监听端口、不发送遥测。远端 Hub 只读公开数据；导入只写本地，不自动 `apply`；
+   `verified=false` 的条目必须二次确认。
 9. **只用安全 Rust。** 全仓库 `unsafe_code = "forbid"`，无例外。依赖必须能在安全代码中使用（`deny.toml` 把关）。
 10. **不乱锁、不锁死。** 只用 `metis-fs` 提供的控制锁与平台同步原语，不用裸 `std::sync::Mutex` 做跨进程/跨线程
     契约。长时间持有的锁必须具名（`guard.label(id)`），等待方不会误判死锁。

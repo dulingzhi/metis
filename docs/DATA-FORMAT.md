@@ -32,6 +32,10 @@
     <timestamp>.json          测量矩阵快照
   hub-cache/
     <sha256>.json             远端 Hub 的 ETag 缓存（可随时删除）
+  skills/
+    <slug>/
+      SKILL.md                远端 Hub 技能的入口文件
+      .metis-hub.json         Metis 的安装清单（只删它列出的文件）
   journal/
     <yyyy-mm>.jsonl           追加式变更日志（Metis 新增，见 §8）
   shim/                       裸命令接管的包装脚本目录
@@ -326,3 +330,74 @@ Metis 新增（基线没有独立的追加式变更日志）。每行一个 JSON
 - 过了新鲜期仍带 `If-None-Match` 条件请求：`304` 沿用缓存；`5xx`/网络失败回退缓存并标
   “stale”；`4xx` **不回退**（避免把“下架/参数错”伪装成旧数据）。
 - 缓存里不得出现凭据：公开读不需要 token，Metis 也不保存 Hub 密码。
+
+## 13. 远端 Hub 导入：`skills/` 与 `hub-*`
+
+`metis.hub-import` 把 Hub 的 `expert` 写成本地人设，并按需把关联 `skill` 写到 `skills/<slug>/`。
+**只写人设文件与技能目录，不自动 `apply`/`arm`。**
+
+### 13.1 技能目录
+
+```text
+~/.metis/skills/<slug>/
+  SKILL.md              ← skill.content.body
+  references/…          ← skill.content.files[].path（只允许安全的相对路径）
+  .metis-hub.json       ← 安装清单（最后写，作为提交点）
+```
+
+清单：
+
+```json
+{
+  "v": 1,
+  "slug": "wb-apiz",
+  "name": "Apiz AI 网关 CLI",
+  "version": "1.0.0",
+  "hash": "sha256:…",
+  "installedAt": 1762000000,
+  "files": ["SKILL.md", "references/mcp-server.md"]
+}
+```
+
+规则：
+
+- 清单是**唯一归属凭据**：更新/移除只处理它列出的文件；目录里用户自己放的文件一律保留。
+- 没有清单的目录**不覆盖、不删除**（无法证明是 Metis 写的）；CLI 需要 `--overwrite` 才覆盖安装。
+- 附件路径逐段校验：拒绝 `..`、绝对路径、盘符/前缀、反斜杠、`:`、NUL、过长，
+  以及会覆盖 `SKILL.md` 或 `.metis-hub.json` 的路径。
+- 版本变化时，先删除旧清单里、且不在新文件集里的文件，再写新文件；清单最后写。
+- `metis.hub-skill-remove` 只删清单里的文件；目录里还有用户文件时保留目录并列进 `leftovers`。
+
+### 13.2 人设 front-matter 的 `hub-*` 键
+
+这些键通过 `Meta.extra` 原样保留，不参与提示词：
+
+| 键 | 说明 |
+|---|---|
+| `hub-url` | Hub 的 API origin（不带尾部 `/`） |
+| `hub-kind` | `expert` |
+| `hub-slug` / `hub-version` / `hub-hash` | 远端身份；`hash` 用于判断“是否同一份内容” |
+| `hub-verified` / `hub-official` | 服务端哈希校验 / 是否官方 |
+| `hub-author` | 作者账号 id（官方条目没有） |
+| `hub-tags` / `hub-providers` | flow 列表；provider 是模型厂商，不是 harness |
+| `hub-skills` | 已安装技能的 `slug@version` 列表 |
+| `hub-model` / `hub-tools` / `hub-notes` | 远端的可选提示，仅记录，不改变 Metis 行为 |
+| `hub-imported-at` | RFC3339 导入时间 |
+
+正文结构：
+
+```markdown
+<prompt>
+
+## 参考资料：<knowledge.name>
+
+<knowledge.text>
+
+## 本地技能
+
+以下技能已随人设安装到本机。需要时先读取对应文件，再按其说明操作：
+
+- <name>（v<version>）：`C:\Users\example\.metis\skills\<slug>\SKILL.md` — <description>
+```
+
+`includeKnowledge=false` 时省略“参考资料”小节；`skills=none` 时省略“本地技能”小节。

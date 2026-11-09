@@ -11,7 +11,7 @@
 //! 对端契约见 `docs/world/hub-api.md`（参考项目 habblaud）。生产地址只在这个文件里出现一次。
 
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 use std::time::Duration;
 
@@ -51,6 +51,18 @@ pub const MAX_SKILLS: usize = 128;
 
 /// 工具名的上限。
 pub const MAX_TOOLS: usize = 32;
+
+/// skill 正文的防御性上限（服务端是 64 KiB）。
+pub const MAX_SKILL_BODY_BYTES: usize = 64 * 1024;
+
+/// skill 附件个数上限。
+pub const MAX_SKILL_FILES: usize = 32;
+
+/// skill 附件合计上限（字节）。
+pub const MAX_SKILL_FILE_BYTES: usize = 128 * 1024;
+
+/// skill 附件相对路径长度上限。
+pub const MAX_SKILL_PATH: usize = 256;
 
 /// Hub 条目类型。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -407,6 +419,92 @@ pub struct HubDetail {
     pub warning: Option<String>,
 }
 
+/// 技能里的一个附件文件。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillFile {
+    /// 相对路径（例如 `references/checklist.md`）。
+    #[serde(default)]
+    pub path: String,
+    /// 正文。
+    #[serde(default)]
+    pub text: String,
+}
+
+/// `skill.content`。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SkillContent {
+    /// 入口文件，服务端固定为 `SKILL.md`。
+    #[serde(default)]
+    pub entry: String,
+    /// `SKILL.md` 正文。
+    #[serde(default)]
+    pub body: String,
+    /// 附件。
+    #[serde(default)]
+    pub files: Vec<SkillFile>,
+    /// 备注。
+    #[serde(default)]
+    pub notes: Option<String>,
+}
+
+impl SkillContent {
+    /// 裁剪到安全范围，返回给用户看的告警。
+    fn sanitize(&mut self) -> Vec<String> {
+        let mut warnings = Vec::new();
+        self.entry = single_line(&self.entry, 64);
+        if self.body.len() > MAX_SKILL_BODY_BYTES {
+            self.body = truncate_chars(&self.body, MAX_SKILL_BODY_BYTES);
+            warnings.push(format!("skill 正文超过 {} KiB，已截断", MAX_SKILL_BODY_BYTES / 1024));
+        }
+        let mut files = Vec::new();
+        let mut seen: Vec<String> = Vec::new();
+        let mut total = 0_usize;
+        for file in self.files.drain(..) {
+            let Some(path) = safe_skill_path(&file.path) else {
+                warnings.push(format!("skill 附件路径不安全，已跳过：{}", file.path));
+                continue;
+            };
+            if seen.contains(&path) {
+                continue;
+            }
+            if files.len() >= MAX_SKILL_FILES {
+                warnings.push(format!("skill 附件超过 {MAX_SKILL_FILES} 个，已截断"));
+                break;
+            }
+            if total.saturating_add(file.text.len()) > MAX_SKILL_FILE_BYTES {
+                warnings.push(format!("skill 附件合计超过 {} KiB，已截断", MAX_SKILL_FILE_BYTES / 1024));
+                break;
+            }
+            total = total.saturating_add(file.text.len());
+            seen.push(path.clone());
+            files.push(SkillFile { path, text: file.text });
+        }
+        self.files = files;
+        self.notes = normalize_optional(self.notes.take(), 2000);
+        warnings
+    }
+}
+
+/// 一个 skill 的完整详情。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HubSkillDetail {
+    /// 摘要字段。
+    #[serde(flatten)]
+    pub item: HubSummary,
+    /// 完整内容。
+    pub content: SkillContent,
+    /// 这份数据的取得时间（Unix 秒）。
+    pub fetched_at: i64,
+    /// 来自网络还是缓存。
+    pub source: DataSource,
+    /// 解析时的告警。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
 /// 数据来源。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -528,6 +626,17 @@ where
         let url = self.detail_url(HubKind::Expert, slug, version)?;
         let fetched = self.fetch_with_cache(&url, DETAIL_TTL_SECS, refresh)?;
         parse_detail(&fetched.body, fetched.fetched_at, fetched.source, fetched.warning)
+    }
+
+    /// 取一个 skill 的完整详情（入口 `SKILL.md` + 附件）。
+    pub fn show_skill(&self, slug: &str, version: Option<&str>, refresh: bool) -> Result<HubSkillDetail> {
+        validate_slug(slug)?;
+        if let Some(version) = version {
+            validate_version(version)?;
+        }
+        let url = self.detail_url(HubKind::Skill, slug, version)?;
+        let fetched = self.fetch_with_cache(&url, DETAIL_TTL_SECS, refresh)?;
+        parse_skill_detail(&fetched.body, fetched.fetched_at, fetched.source, fetched.warning)
     }
 
     fn list_url(&self, query: &HubQuery) -> Result<String> {
@@ -717,6 +826,15 @@ struct HubDetailResponse {
     content: ExpertContent,
 }
 
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HubSkillDetailResponse {
+    #[serde(flatten)]
+    item: HubSummary,
+    #[serde(default)]
+    content: SkillContent,
+}
+
 fn parse_page(body: &str, fetched_at: i64, source: DataSource, mut warning: Option<String>) -> Result<HubPage> {
     let response: HubListResponse = serde_json::from_str(body).map_err(|error| {
         MetisError::new(ErrorKind::Network, "Hub 返回的列表不是预期 JSON")
@@ -782,6 +900,53 @@ fn parse_detail(body: &str, fetched_at: i64, source: DataSource, mut warning: Op
     }
 
     Ok(HubDetail { item: response.item, content: response.content, fetched_at, source, warning })
+}
+
+fn parse_skill_detail(body: &str, fetched_at: i64, source: DataSource, mut warning: Option<String>) -> Result<HubSkillDetail> {
+    let mut response: HubSkillDetailResponse = serde_json::from_str(body).map_err(|error| {
+        MetisError::new(ErrorKind::Network, "Hub 返回的 skill 详情不是预期 JSON")
+            .with_detail(format!("{error}；{}", preview(body)))
+            .with_remediation("确认地址指向 worldd 的 `/v1/hub`；稍后重试")
+    })?;
+
+    response.item.sanitize();
+    if !response.item.is_usable() {
+        return Err(
+            MetisError::new(ErrorKind::Network, "Hub skill 详情缺少 slug、name 或 version").with_remediation("回到列表刷新；如果条目刚被下架，换一个 skill")
+        );
+    }
+    if response.item.kind != HubKind::Skill.as_str() {
+        return Err(
+            MetisError::new(ErrorKind::Network, format!("条目类型是 {}，不是 skill", response.item.kind)).with_remediation("从技能列表选择一个 skill 条目")
+        );
+    }
+
+    let content_warnings = response.content.sanitize();
+    if !content_warnings.is_empty() {
+        let text = content_warnings.join("；");
+        warning = Some(match warning {
+            Some(existing) => format!("{existing}；{text}"),
+            None => text,
+        });
+    }
+    if response.content.entry != "SKILL.md" {
+        return Err(MetisError::new(ErrorKind::Network, format!("skill 入口文件不是 SKILL.md：{}", response.content.entry))
+            .with_remediation("这个 skill 不符合 Metis 支持的 SKILL.md 布局；换一个技能"));
+    }
+    if response.content.body.trim().is_empty() {
+        return Err(
+            MetisError::new(ErrorKind::Network, "这个 skill 的 SKILL.md 正文为空").with_remediation("换一个技能；如果这是你自己的条目，请在 Hub 上补全正文")
+        );
+    }
+    if !response.item.verified {
+        let text = "Hub 校验失败：内容哈希与记录不一致".to_owned();
+        warning = Some(match warning {
+            Some(existing) => format!("{existing}；{text}"),
+            None => text,
+        });
+    }
+
+    Ok(HubSkillDetail { item: response.item, content: response.content, fetched_at, source, warning })
 }
 
 fn hub_error(status: u16, body: &[u8]) -> MetisError {
@@ -869,7 +1034,7 @@ fn is_loopback(url: &Url) -> bool {
     }
 }
 
-fn validate_slug(slug: &str) -> Result<()> {
+pub(crate) fn validate_slug(slug: &str) -> Result<()> {
     let valid = !slug.is_empty()
         && slug.len() <= 64
         && slug.chars().next().is_some_and(|first| first.is_ascii_lowercase() || first.is_ascii_digit())
@@ -881,7 +1046,7 @@ fn validate_slug(slug: &str) -> Result<()> {
         .with_remediation("slug 只能含小写字母、数字与连字符，最长 64；从列表里选择条目"))
 }
 
-fn validate_version(version: &str) -> Result<()> {
+pub(crate) fn validate_version(version: &str) -> Result<()> {
     let valid = !version.is_empty()
         && version.len() <= 32
         && version.chars().all(|ch| ch.is_ascii_alphanumeric() || ch == '.' || ch == '-' || ch == '_')
@@ -897,7 +1062,43 @@ fn cleaned(value: Option<&str>) -> Option<String> {
     value.map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned)
 }
 
-fn single_line(value: &str, max: usize) -> String {
+/// 校验并归一化 skill 附件的相对路径；不合法返回 `None`。
+///
+/// 拒绝：绝对路径、`..`、盘符/前缀、反斜杠、`:`、NUL、过长，
+/// 以及会覆盖入口文件 `SKILL.md` 或 manifest `.metis-hub.json` 的路径。
+pub fn safe_skill_path(path: &str) -> Option<String> {
+    let trimmed = path.trim();
+    if trimmed.is_empty() || trimmed.len() > MAX_SKILL_PATH {
+        return None;
+    }
+    if trimmed.contains('\\') || trimmed.contains(':') || trimmed.contains('\0') {
+        return None;
+    }
+    let mut parts = Vec::new();
+    for component in Path::new(trimmed).components() {
+        match component {
+            Component::Normal(part) => {
+                let text = part.to_str()?;
+                if text.is_empty() {
+                    return None;
+                }
+                parts.push(text.to_owned());
+            }
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    if parts.is_empty() {
+        return None;
+    }
+    let joined = parts.join("/");
+    if joined.eq_ignore_ascii_case("SKILL.md") || joined.eq_ignore_ascii_case(".metis-hub.json") {
+        return None;
+    }
+    Some(joined)
+}
+
+pub(crate) fn single_line(value: &str, max: usize) -> String {
     value.replace(['\r', '\n'], " ").trim().chars().take(max).collect()
 }
 
@@ -1020,6 +1221,12 @@ mod tests {
     fn expert_json(prompt: &str, extra: &str) -> String {
         format!(
             r#"{{"kind":"expert","slug":"security-reviewer","name":"安全审查专家","description":"desc","version":"1.2.0","status":"approved","visibility":"public","author":"acc_1","official":false,"tags":["security"],"providers":["claude"],"source":{{"kind":"inline"}},"hash":"sha256:abc","createdAt":1,"updatedAt":2,"downloads":3,"verified":true,"content":{{"prompt":"{prompt}"{extra}}}}}"#
+        )
+    }
+
+    fn skill_json(body: &str, files: &str) -> String {
+        format!(
+            r#"{{"kind":"skill","slug":"wb-apiz","name":"Apiz","description":"d","version":"1.0.0","status":"approved","visibility":"public","verified":true,"content":{{"entry":"SKILL.md","body":"{body}","files":[{files}]}}}}"#
         )
     }
 
@@ -1170,6 +1377,65 @@ mod tests {
         assert_eq!(detail.content.knowledge.len(), MAX_KNOWLEDGE);
         assert_eq!(detail.content.skills.len(), MAX_SKILLS);
         assert!(detail.warning.as_deref().unwrap_or_default().contains("截断"), "{:?}", detail.warning);
+    }
+
+    #[test]
+    fn skill_detail_parses_body_and_files() {
+        let body = skill_json("技能正文", r#"{"path":"references/x.md","text":"附件"}"#);
+        let responses = Rc::new(RefCell::new(VecDeque::from([response(200, &body)])));
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let client = client(responses, requests.clone(), None);
+        let detail = client.show_skill("wb-apiz", None, false).expect("skill");
+        assert_eq!(detail.content.entry, "SKILL.md");
+        assert_eq!(detail.content.body, "技能正文");
+        assert_eq!(detail.content.files.len(), 1);
+        assert_eq!(detail.content.files[0].path, "references/x.md");
+        assert!(requests.borrow()[0].url.ends_with("/v1/hub/items/skill/wb-apiz"), "{}", requests.borrow()[0].url);
+    }
+
+    #[test]
+    fn skill_detail_rejects_a_foreign_entry() {
+        let body = skill_json("正文", "").replace(r#""entry":"SKILL.md""#, r#""entry":"OTHER.md""#);
+        let responses = Rc::new(RefCell::new(VecDeque::from([response(200, &body)])));
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let client = client(responses, requests, None);
+        let error = client.show_skill("wb-apiz", None, false).expect_err("must fail");
+        assert!(error.message().contains("SKILL.md"), "{}", error.message());
+    }
+
+    #[test]
+    fn skill_detail_drops_unsafe_paths() {
+        let files = r#"{"path":"../evil.md","text":"x"},{"path":"references/ok.md","text":"y"}"#;
+        let body = skill_json("正文", files);
+        let responses = Rc::new(RefCell::new(VecDeque::from([response(200, &body)])));
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let client = client(responses, requests, None);
+        let detail = client.show_skill("wb-apiz", None, false).expect("skill");
+        assert_eq!(detail.content.files.len(), 1);
+        assert_eq!(detail.content.files[0].path, "references/ok.md");
+        assert!(detail.warning.as_deref().unwrap_or_default().contains("不安全"), "{:?}", detail.warning);
+    }
+
+    #[test]
+    fn skill_detail_caps_files() {
+        let files: Vec<String> = (0..40).map(|i| format!(r#"{{"path":"f{i}.md","text":"x"}}"#)).collect();
+        let body = skill_json("p", &files.join(","));
+        let responses = Rc::new(RefCell::new(VecDeque::from([response(200, &body)])));
+        let requests = Rc::new(RefCell::new(Vec::new()));
+        let client = client(responses, requests, None);
+        let detail = client.show_skill("wb-apiz", None, false).expect("skill");
+        assert_eq!(detail.content.files.len(), MAX_SKILL_FILES);
+        assert!(detail.warning.as_deref().unwrap_or_default().contains("截断"), "{:?}", detail.warning);
+    }
+
+    #[test]
+    fn safe_skill_path_rejects_traversal_and_reserved_names() {
+        for bad in ["", ".", "..", "../x", "a/../../b", "/abs", "C:\\x", "a\\b", "a:b", "SKILL.md", "skill.md", ".metis-hub.json", "a\0b"] {
+            assert!(safe_skill_path(bad).is_none(), "{bad:?} 必须被拒绝");
+        }
+        assert_eq!(safe_skill_path("references/ok.md").as_deref(), Some("references/ok.md"));
+        assert_eq!(safe_skill_path("./references//ok.md").as_deref(), Some("references/ok.md"));
+        assert_eq!(safe_skill_path("a/b").as_deref(), Some("a/b"));
     }
 
     #[test]

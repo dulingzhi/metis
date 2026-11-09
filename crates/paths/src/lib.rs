@@ -111,6 +111,18 @@ impl Paths {
         self.home.join("hub-cache")
     }
 
+    /// `skills/`：从远端 Hub 安装的技能，每个 slug 一个目录。
+    pub fn skills_dir(&self) -> PathBuf {
+        self.home.join("skills")
+    }
+
+    /// `skills/<slug>/`：一个已安装的技能。
+    ///
+    /// `slug` 必须已经由 `metis_engine::hub` 校验过（小写字母、数字、连字符）。
+    pub fn skill_dir(&self, slug: &str) -> PathBuf {
+        self.skills_dir().join(slug)
+    }
+
     /// `footprints.json`：写入所有权账本。
     pub fn footprints_file(&self) -> PathBuf {
         self.home.join("footprints.json")
@@ -430,6 +442,13 @@ mod tests {
         let paths = Paths::with_home(abs(&["ap"]));
         assert_eq!(paths.hub_cache_dir(), paths.home().join("hub-cache"));
         assert!(!paths.hub_cache_dir().starts_with(paths.personas_dir()), "缓存不能混进人设目录");
+    }
+
+    #[test]
+    fn skill_dir_is_one_directory_per_slug_under_skills() {
+        let paths = Paths::with_home(abs(&["ap"]));
+        assert_eq!(paths.skills_dir(), paths.home().join("skills"));
+        assert_eq!(paths.skill_dir("wb-apiz"), paths.skills_dir().join("wb-apiz"));
     }
 
     #[test]

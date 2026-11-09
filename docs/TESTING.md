@@ -161,6 +161,7 @@ pub struct TestClock { /* … */ }
 | 用例 | 需要 | 最近结果 |
 |---|---|---|
 | `hub::tests::live_hub_list_and_detail_match_the_contract` | 能访问 `https://n.kkpt.tech:8443` | **2026-11-09 通过**：真实列表非空、详情 prompt 非空；默认 CI 用注入式假 fetch，不联网 |
+| `hub_import::tests::live_import_of_an_expert_with_skills` | 能访问 `https://n.kkpt.tech:8443` | **2026-11-09 通过**：真实导入一个带关联技能的 expert，人设与 `skills/<slug>/SKILL.md` 都落到临时 home |
 | `verify` 抓包（每家在用的 harness） | 本机已装该 harness | 未跑（M0） |
 | `armor run/judge` | 本机已装该 harness + 模型可用 | 未跑（M0） |
 | PI-Desktop 的 imported 插件热切 | PI-Desktop 便携版 | 未跑（M0） |
