@@ -105,6 +105,8 @@ pub struct MetisApp {
     pub jobs: Jobs<JobDone>,
     /// 远端 Hub 的浏览状态（瞬时）。
     pub hub: HubBrowse,
+    /// Markdown 渲染缓存（详情浮层用；不持久化）。
+    pub markdown: egui_commonmark::CommonMarkCache,
     /// 顶部提示。
     pub notice: Option<Notice>,
     /// 正在运行的命令 id（用来禁用按钮）。
@@ -127,6 +129,7 @@ impl MetisApp {
             snapshot: Snapshot::default(),
             jobs: Jobs::new(),
             hub: HubBrowse::default(),
+            markdown: egui_commonmark::CommonMarkCache::default(),
             notice: None,
             busy: None,
         }

@@ -1046,9 +1046,18 @@
   分页控件被推到很远，窗口里看着像"没有分页"。
 - **原因**：详情和结果都参与页面布局，高度随内容线性增长。
 - **规则**：详情用 `Area + Order::Foreground` 独立浮层（与执行器详情同一套模式），
-  浮层内容自己的 `ScrollArea` 限高；结果列表 `ScrollArea::max_height(320)`，
+  浮层内容自己的 `ScrollArea` 限高；结果列表 `ScrollArea::max_height(480)`，
   分页控件留在滚动区外。对应测试：`the_hub_detail_overlay_paints_only_when_selected`、
   `the_hub_list_is_height_bounded_and_scrolls`。
+
+### G88. 人设正文是 Markdown，别用纯文本 Label 展示
+- **现象**：详情里把 `prompt` 原样塞进 `Label`，`# 标题`、`**加粗**`、列表全部变成原始符号，
+  用户以为远端内容坏了。
+- **原因**：人设正文是 Markdown；纯文本控件不会解析它。
+- **规则**：展示层用 `egui_commonmark` 渲染 `prompt` / `knowledge[].text` / `notes`；
+  **存储层仍原样保存原文**，渲染只发生在 UI。对应实现：`hub_detail_content`；
+  真实窗口验证能看到 Markdown 标题。
+
 
 
 ### G86. `#[serde(flatten)]` 加上同名字段 → 重复 JSON 键，反序列化必坏

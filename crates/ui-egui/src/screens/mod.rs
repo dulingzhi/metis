@@ -759,7 +759,7 @@ fn import_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
 }
 
 /// 搜索结果列表的最大高度；超过就在列表内滚动，不把整页撑长。
-const HUB_LIST_MAX_HEIGHT: f32 = 320.0;
+const HUB_LIST_MAX_HEIGHT: f32 = 480.0;
 
 /// 远端人设库（worldd / KK Hub）。
 ///
@@ -1026,16 +1026,24 @@ fn hub_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
 
     ui.add_space(space::S);
     widgets::section_title(ui, "提示词");
-    egui::ScrollArea::vertical().max_height(180.0).show(ui, |ui| {
-        ui.add(egui::Label::new(RichText::new(detail.content.prompt.clone()).size(font::SMALL).family(fonts::mono())).wrap_mode(egui::TextWrapMode::Wrap));
-    });
+    // 人设正文按 Markdown 渲染（标题、加粗、列表、代码块、链接）。
+    ui.style_mut().visuals.hyperlink_color = t.accent_ink;
+    egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, &detail.content.prompt);
 
     if !detail.content.knowledge.is_empty() {
         ui.add_space(space::S);
         widgets::section_title(ui, &format!("参考资料（{}）", detail.content.knowledge.len()));
         for file in &detail.content.knowledge {
-            ui.label(RichText::new(format!("{}（{} 字符）", file.name, file.text.chars().count())).size(font::CAPTION).color(t.text_faint));
+            ui.collapsing(RichText::new(format!("{}（{} 字符）", file.name, file.text.chars().count())).size(font::SMALL), |ui| {
+                egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, &file.text);
+            });
         }
+    }
+
+    if let Some(notes) = detail.content.notes.as_deref().filter(|notes| !notes.trim().is_empty()) {
+        ui.add_space(space::S);
+        widgets::section_title(ui, "备注");
+        egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, notes);
     }
 
     if !detail.content.skills.is_empty() {
@@ -1236,9 +1244,10 @@ mod tests {
         HubDetail {
             item: hub_summary(slug, "安全审查专家", verified),
             content: ExpertContent {
-                prompt: "你是一名安全审查专家。".to_owned(),
-                knowledge: vec![KnowledgeFile { name: "checklist.md".to_owned(), text: "检查清单".to_owned() }],
+                prompt: "# 安全审查\n\n**重点**：先读代码。\n\n- 检查权限\n- 检查数据流".to_owned(),
+                knowledge: vec![KnowledgeFile { name: "checklist.md".to_owned(), text: "## 检查清单\n\n1. 权限\n2. 数据流".to_owned() }],
                 skills: skills.iter().map(|slug| SkillRef { slug: (*slug).to_owned(), name: Some(format!("技能 {slug}")) }).collect(),
+                notes: Some("## 备注\n\n仅内部使用".to_owned()),
                 ..Default::default()
             },
             fetched_at: 1,
@@ -1397,7 +1406,7 @@ mod tests {
     fn the_hub_list_is_height_bounded_and_scrolls() {
         // `black_box` 避免 clippy 的 constant-assertion：测的是"有人改了常量之后仍然合理"。
         let height = std::hint::black_box(HUB_LIST_MAX_HEIGHT);
-        assert!((100.0..=400.0).contains(&height), "列表最大高度 {height} 不合理");
+        assert!((200.0..=600.0).contains(&height), "列表最大高度 {height} 不合理");
         let (_dir, mut app) = app();
         app.hub.items = (0..20).map(|i| hub_summary(&format!("s{i}"), &format!("条目 {i}"), true)).collect();
         app.hub.fetched_at = 1;
