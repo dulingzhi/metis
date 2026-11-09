@@ -157,6 +157,11 @@ impl MetisApp {
         if self.ui.palette.open && ctx.input(|input| input.key_pressed(Key::Escape)) {
             self.ui.palette.close();
         }
+        // 远端详情浮层：Esc 关闭（命令面板开着时先关面板，再按一次关详情）。
+        if !self.ui.palette.open && self.hub.selected.is_some() && ctx.input(|input| input.key_pressed(Key::Escape)) {
+            self.hub.selected = None;
+            self.hub.detail = None;
+        }
 
         // 其余快捷键在有控件持有键盘焦点时让路 ——
         // 否则用户在搜索框里打 `r` 会被当成"刷新"。
@@ -719,6 +724,7 @@ impl eframe::App for MetisApp {
 
         // 详情浮层：盖在内容之上，独立于布局。
         crate::screens::show_detail(self, ui.ctx());
+        crate::screens::show_hub_detail(self, ui.ctx());
 
         // 命令面板画在最上层（`Ctrl+K` 或顶栏入口唤起）。
         //

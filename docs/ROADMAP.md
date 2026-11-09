@@ -158,6 +158,7 @@ M0–M10 的闭环已落地；当前没有进行中的条目。每项"能用"的
 - [x] M10.3 CLI：`metis hub list|show|import|skill`（依赖 M10.2）。34 条 CLI e2e（含 hub 帮助与坏输入不联网）；2026-11-09 真机 `list` / `show` / `import` / `skill remove` 通过
 - [x] M10.4 GUI：远端库卡片、分页（上一页 + 页码）、详情面板、skill 勾选、未校验二次确认（依赖 M10.1、M6.6）。人设库屏新增远端库卡片/内联详情；3 条无头渲染测试 + 快照基线重建；真实窗口 agent-desktop：加载 → 列表 → 详情通过
 - [x] M10.5 文档与真机验证：DATA-FORMAT、STATUS、PITFALLS、真实 worldd 调用记录（依赖 M10.4）。文档审计完成；STATUS 增加真机记录；PARITY §10 标注为 Metis 独有扩展；当前无未完成项
+- [x] M10.6 GUI 修正：详情改独立浮层；结果列表最大高度 + 列表内滚动（依赖 M10.4）。无头浮层/列表高度测试；真实窗口 agent-desktop 验证浮层打开
 
 ---
 

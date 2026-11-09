@@ -1041,6 +1041,16 @@
   ```
   对应实现：`screens::hub_card`；真实窗口验证通过。
 
+### G87. 详情内联 + 长结果列表会把整页撑长
+- **现象**：详情放在列表卡片下面，打开一条就把列表顶走；20 条结果时整页很长，
+  分页控件被推到很远，窗口里看着像"没有分页"。
+- **原因**：详情和结果都参与页面布局，高度随内容线性增长。
+- **规则**：详情用 `Area + Order::Foreground` 独立浮层（与执行器详情同一套模式），
+  浮层内容自己的 `ScrollArea` 限高；结果列表 `ScrollArea::max_height(320)`，
+  分页控件留在滚动区外。对应测试：`the_hub_detail_overlay_paints_only_when_selected`、
+  `the_hub_list_is_height_bounded_and_scrolls`。
+
+
 ### G86. `#[serde(flatten)]` 加上同名字段 → 重复 JSON 键，反序列化必坏
 - **现象**：`HubDetail` 里 `item: HubSummary` 有 `source`（条目来源），外层又有一个
   `source: DataSource`（网络/缓存）。序列化出两个 `"source"` 键，UI 用

@@ -758,6 +758,9 @@ fn import_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     });
 }
 
+/// 搜索结果列表的最大高度；超过就在列表内滚动，不把整页撑长。
+const HUB_LIST_MAX_HEIGHT: f32 = 320.0;
+
 /// 远端人设库（worldd / KK Hub）。
 ///
 /// 浏览、详情、导入都是后台任务；这里只读 `app.hub` 的快照，不在帧里联网。
@@ -844,40 +847,44 @@ fn hub_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
             }
         } else {
             let mut open: Option<String> = None;
-            for item in &app.hub.items {
-                let selected = app.hub.selected.as_deref() == Some(item.slug.as_str());
-                ui.horizontal(|ui| {
-                    let name = if item.official { format!("★ {}", item.name) } else { item.name.clone() };
-                    if ui.selectable_label(selected, RichText::new(name).size(font::BODY).color(t.text)).clicked() {
-                        open = Some(item.slug.clone());
-                    }
-                    ui.label(RichText::new(format!("v{}", item.version)).size(font::CAPTION).color(t.text_faint));
-                    if item.official {
-                        widgets::pill(ui, "官方", t.accent_ink, t.accent_soft);
-                    }
-                    if item.verified {
-                        widgets::pill(ui, "已校验", t.success, t.raised);
-                    } else {
-                        widgets::pill(ui, "未校验", t.danger, t.raised);
-                    }
-                    if item.downloads > 0 {
-                        ui.label(RichText::new(format!("↓{}", item.downloads)).size(font::CAPTION).color(t.text_faint));
-                    }
-                    // 每行都有同名「详情」按钮：无障碍树里必须带条目名，否则
-                    // `agent-desktop` 报 AMBIGUOUS_TARGET，读屏用户也分不清。
-                    let detail_link = widgets::link(ui, "详情");
-                    detail_link.ctx.accesskit_node_builder(detail_link.id, |node| {
-                        node.set_label(format!("详情：{}", item.name));
+            // 结果列表有自己的滚动区：20 条结果不能把整页撑长。
+            // 分页控件留在滚动区外，始终可见。
+            egui::ScrollArea::vertical().max_height(HUB_LIST_MAX_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
+                for item in &app.hub.items {
+                    let selected = app.hub.selected.as_deref() == Some(item.slug.as_str());
+                    ui.horizontal(|ui| {
+                        let name = if item.official { format!("★ {}", item.name) } else { item.name.clone() };
+                        if ui.selectable_label(selected, RichText::new(name).size(font::BODY).color(t.text)).clicked() {
+                            open = Some(item.slug.clone());
+                        }
+                        ui.label(RichText::new(format!("v{}", item.version)).size(font::CAPTION).color(t.text_faint));
+                        if item.official {
+                            widgets::pill(ui, "官方", t.accent_ink, t.accent_soft);
+                        }
+                        if item.verified {
+                            widgets::pill(ui, "已校验", t.success, t.raised);
+                        } else {
+                            widgets::pill(ui, "未校验", t.danger, t.raised);
+                        }
+                        if item.downloads > 0 {
+                            ui.label(RichText::new(format!("↓{}", item.downloads)).size(font::CAPTION).color(t.text_faint));
+                        }
+                        // 每行都有同名「详情」按钮：无障碍树里必须带条目名，否则
+                        // `agent-desktop` 报 AMBIGUOUS_TARGET，读屏用户也分不清。
+                        let detail_link = widgets::link(ui, "详情");
+                        detail_link.ctx.accesskit_node_builder(detail_link.id, |node| {
+                            node.set_label(format!("详情：{}", item.name));
+                        });
+                        if detail_link.clicked() {
+                            open = Some(item.slug.clone());
+                        }
                     });
-                    if detail_link.clicked() {
-                        open = Some(item.slug.clone());
+                    if !item.description.is_empty() {
+                        ui.label(RichText::new(&item.description).size(font::CAPTION).color(t.text_faint));
                     }
-                });
-                if !item.description.is_empty() {
-                    ui.label(RichText::new(&item.description).size(font::CAPTION).color(t.text_faint));
+                    widgets::separator(ui);
                 }
-                widgets::separator(ui);
-            }
+            });
             if let Some(slug) = open {
                 app.spawn_hub_detail(slug, None);
             }
@@ -912,44 +919,88 @@ fn hub_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     if search {
         app.spawn_hub_search();
     }
-    if app.hub.selected.is_some() {
-        ui.add_space(space::L);
-        widgets::card(t).show(ui, |ui| hub_detail_body(app, ui, t));
+}
+
+/// 远端 expert 详情浮层的对外入口（由 `MetisApp::ui` 在主循环里调用）。
+///
+/// 和执行器详情一样用 `Area + Order::Foreground`：不参与页面布局，
+/// 内容在自己的滚动区里，不会把整页撑长。
+pub fn show_hub_detail(app: &mut MetisApp, ctx: &egui::Context) {
+    if app.hub.selected.is_none() {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    let screen = ctx.content_rect();
+    let width = 680.0_f32.min(screen.width() - 48.0);
+    let mut close = false;
+
+    egui::Area::new(egui::Id::new("hub-detail"))
+        .fixed_pos(egui::pos2(screen.center().x - width / 2.0, screen.top() + 32.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.painter().rect_filled(screen, 0.0, egui::Color32::from_black_alpha(90));
+            let backdrop = ui.interact(screen, ui.id().with("hub-backdrop"), egui::Sense::click());
+            if backdrop.clicked() {
+                close = true;
+            }
+
+            egui::Frame::new()
+                .fill(t.card)
+                .stroke(egui::Stroke::new(1.0, t.card_border))
+                .corner_radius(egui::CornerRadius::same(t.radius_lg as u8))
+                .shadow(egui::epaint::Shadow { offset: [0, 8], blur: 24, spread: 0, color: t.shadow })
+                .inner_margin(egui::Margin::same(space::L as i8))
+                .show(ui, |ui| {
+                    ui.set_width(width - 2.0 * space::L);
+                    ui.horizontal(|ui| {
+                        let title = app.hub.detail.as_ref().map(|detail| detail.item.name.clone()).unwrap_or_else(|| "远端详情".to_owned());
+                        widgets::section_title(ui, &title);
+                        if let Some(detail) = &app.hub.detail {
+                            ui.label(RichText::new(format!("v{}", detail.item.version)).size(font::SMALL).color(t.text_faint));
+                            if detail.item.official {
+                                widgets::pill(ui, "官方", t.accent_ink, t.accent_soft);
+                            }
+                            if detail.item.verified {
+                                widgets::pill(ui, "已校验", t.success, t.raised);
+                            } else {
+                                widgets::pill(ui, "未校验", t.danger, t.raised);
+                            }
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let text = egui::RichText::new("关闭").size(font::CAPTION).color(t.accent_ink);
+                            if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                    ui.add_space(space::S);
+
+                    // 内容自己的滚动区：标题/按钮固定，长提示词不会把浮层顶出屏幕。
+                    let max_body = (screen.height() - 220.0).clamp(180.0, 620.0);
+                    egui::ScrollArea::vertical().max_height(max_body).auto_shrink([false, true]).show(ui, |ui| {
+                        hub_detail_content(app, ui, &t);
+                    });
+                });
+        });
+
+    if close {
+        app.hub.selected = None;
+        app.hub.detail = None;
     }
 }
 
-/// 远端 expert 的详情卡片（内联，不参与浮层布局）。
-fn hub_detail_body(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
+/// 浮层内部的内容（已被标题栏与滚动区包住）。
+fn hub_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     if app.hub.detail_loading {
         widgets::working(ui, "正在加载详情…", None);
         return;
     }
     if let Some(error) = app.hub.detail_error.as_deref() {
         ui.label(RichText::new(error).size(font::SMALL).color(t.danger));
-        if widgets::secondary(ui, "关闭").clicked() {
-            app.hub.selected = None;
-            app.hub.detail = None;
-        }
         return;
     }
     let Some(detail) = app.hub.detail.clone() else { return };
 
-    let mut close = false;
-    ui.horizontal_wrapped(|ui| {
-        widgets::section_title(ui, &detail.item.name);
-        ui.label(RichText::new(format!("v{}", detail.item.version)).size(font::SMALL).color(t.text_faint));
-        if detail.item.official {
-            widgets::pill(ui, "官方", t.accent_ink, t.accent_soft);
-        }
-        if detail.item.verified {
-            widgets::pill(ui, "已校验", t.success, t.raised);
-        } else {
-            widgets::pill(ui, "未校验", t.danger, t.raised);
-        }
-        if widgets::link(ui, "关闭").clicked() {
-            close = true;
-        }
-    });
     if !detail.item.description.is_empty() {
         ui.label(RichText::new(&detail.item.description).size(font::SMALL).color(t.text_dim));
     }
@@ -1038,9 +1089,6 @@ fn hub_detail_body(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
         if preview_response.clicked() {
             preview = true;
         }
-        if widgets::secondary(ui, "关闭").clicked() {
-            close = true;
-        }
         if app.hub.importing {
             widgets::working(ui, "正在导入…", None);
         }
@@ -1050,10 +1098,6 @@ fn hub_detail_body(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     }
     if preview {
         app.spawn_hub_import(true);
-    }
-    if close {
-        app.hub.selected = None;
-        app.hub.detail = None;
     }
 }
 
@@ -1203,6 +1247,22 @@ mod tests {
         }
     }
 
+    /// 渲染远端详情浮层；`Area` 需要 2~3 帧才能定几何（G75）。
+    fn render_hub_overlay(app: &mut MetisApp) -> usize {
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+        let mut shapes = 0;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                show_hub_detail(app, ui.ctx());
+            });
+            output.textures_delta.clear();
+            shapes = shapes.max(output.shapes.len());
+        }
+        shapes
+    }
+
     fn app() -> (tempfile::TempDir, MetisApp) {
         let dir = tempfile::tempdir().expect("tmp");
         let mut app = MetisApp::with_paths(Paths::with_home(dir.path().join("home")));
@@ -1313,14 +1373,15 @@ mod tests {
     }
 
     #[test]
-    fn the_hub_detail_renders_prompt_knowledge_and_skills() {
+    fn the_hub_detail_overlay_paints_only_when_selected() {
         let (_dir, mut app) = app();
-        let empty = render(crate::state::Screen::Library, &mut app);
+        assert_eq!(render_hub_overlay(&mut app), 0, "没选中时不该画浮层");
+
         app.hub.selected = Some("a".to_owned());
         app.hub.detail = Some(hub_detail("a", true, &["skill-a", "skill-b"]));
         app.hub.selected_skills.insert("skill-a".to_owned());
-        let with_detail = render(crate::state::Screen::Library, &mut app);
-        assert!(with_detail > empty, "空态 {empty} 个图元，有详情 {with_detail} 个");
+        let count = render_hub_overlay(&mut app);
+        assert!(count > 20, "详情浮层只画了 {count} 个图元");
     }
 
     #[test]
@@ -1329,7 +1390,18 @@ mod tests {
         app.hub.selected = Some("a".to_owned());
         app.hub.detail = Some(hub_detail("a", false, &[]));
         assert!(!app.hub.can_import(), "未校验时导入按钮必须是禁用的");
-        assert!(render(crate::state::Screen::Library, &mut app) > 5);
+        assert!(render_hub_overlay(&mut app) > 20);
+    }
+
+    #[test]
+    fn the_hub_list_is_height_bounded_and_scrolls() {
+        // `black_box` 避免 clippy 的 constant-assertion：测的是"有人改了常量之后仍然合理"。
+        let height = std::hint::black_box(HUB_LIST_MAX_HEIGHT);
+        assert!((100.0..=400.0).contains(&height), "列表最大高度 {height} 不合理");
+        let (_dir, mut app) = app();
+        app.hub.items = (0..20).map(|i| hub_summary(&format!("s{i}"), &format!("条目 {i}"), true)).collect();
+        app.hub.fetched_at = 1;
+        assert!(render(crate::state::Screen::Library, &mut app) > 20, "20 条结果应该能画出来（超出部分在列表内滚动）");
     }
 
     #[test]
