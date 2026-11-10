@@ -39,6 +39,7 @@
 | `project [on\|off\|status] [h…] [--dir]` | `metis project list\|add\|remove` | **已对齐** | 目录以绝对路径登记、摘除时先撤盘。证据：`remove_takes_the_block_off_disk` + 真机端到端 |
 | `status` | `metis status` | **已对齐** | state 全量 + 路径；`--json` 机器可读 |
 | `ls` | `metis ls` | **已对齐** | 人设列表，`*` 标当前 |
+| — | `metis show <id>` | **有意不同（新增）** | 读一份人设的完整正文 + 元数据（`persona.show`）；GUI 的详情浮层走同一条命令。证据：`show_prints_the_full_persona` |
 | `pull [src]` | — | **不需要**（原 decision 1） | 已拍板：默认不带源；通用导入由 `metis import <dir\|owner/repo>` 覆盖 |
 | `persona import <dir> [--no-overwrite]` | `metis import <dir\|owner/repo>` | **已对齐** | 本地目录 + GitHub 两种来源；按内容去重（`identical`）；`--overwrite` 控制覆盖。GitHub 走 **codeload tarball（1 个请求）**，不打 API |
 | `import agent-purge` | `metis import-agent-purge` | **有意不同（新增）** | 只读导入；**不导入 armed**（标记不同）；报告上游残留 |
@@ -46,7 +47,7 @@
 | `matrix` | `metis harnesses` / `--json` | **已对齐** | 15 家 × 四通道的可用性与原因 |
 | `armor matrix\|plan\|preflight\|check\|run\|judge` | `metis armor plan\|preflight\|record\|judge\|adopt` | **已对齐（语义等价）** | `run` 由用户跑真实评测后 `record` 记入；判层由 `verify` 承担 |
 | `update` / `upgrade [--download] [--yes]` | `metis update` | **部分** | Release 检查已对齐（真版本比较、可注入 fetch）；**就地替换 exe 未做**（Windows 运行中的 exe 不能覆盖） |
-| `web [--port] …` | — | **不需要** | 没有本地 Web 服务；等价能力是 `metis-gui` 窗口 |
+| `web [--port] …` | — | **不需要** | 没有本地 Web 服务；等价能力是 `metis`（无参数）打开的窗口 |
 | `--serve`（隐藏） | — | **不需要** | 同上 |
 | `clean [--dry-run]` | `metis clean [--dry-run]` | **已对齐** | 按账本撤回，保留人设与 state。证据：`clean::tests::*`（10 条）+ 真机端到端 |
 | `self-uninstall [--yes] [--dry-run]` | `metis self-uninstall [--yes] [--dry-run]` | **已对齐** | 无 `--yes`/`--dry-run` 时以退出码 2 拒绝。证据：`self_uninstall_refuses_without_confirmation` |
@@ -56,13 +57,13 @@
 | — | `metis journal [--month]` / `journal-prune` | **有意不同（新增）** | 追加式变更日志 + 保留期裁剪 |
 | — | `metis i18n [--all]` | **有意不同（新增）** | 文案表自检 |
 | — | `metis mode`（含 `off`） | **已对齐** | `off` 既是单家模式，也参与总电源语义 |
-| — | `metis-gui` | **有意不同（新增）** | egui 桌面控制台，替代 Web 控制台 |
+| — | `metis`（无参数） | **有意不同（新增）** | egui 桌面控制台，替代 Web 控制台；与 CLI 同一个 exe |
 | — | `metis --json` | **有意不同（新增）** | 所有读命令支持机器可读输出 |
 
 ### 1.0 小结（CLI 面）
 
 - **已对齐**：20 项
-- **有意不同 / 不需要 / 新增**：13 项
+- **有意不同 / 不需要 / 新增**：14 项
 - **部分**：2 项（`arm --all`、`update` 的就地替换）
 - **真缺**：3 项 —— `use`（无 id）、`sync`、`install`；外加 `slash` 的 CLI 入口
 ### 1.1 全局旗标
@@ -132,7 +133,7 @@
 | 行为 | 状态 | 备注 |
 |---|---|---|
 | `install` 的落点、层、托管块标记 | 有意不同 | 标记从 `agent-purge` 改成 `metis`；落点路径一致 |
-| `shim` 的包装脚本与 PATH 前置 | **已对齐** | Windows `.cmd` / Unix shell；内容不内嵌人设，转发到 `metis launch`。证据：`shim::tests::script_never_embeds_the_persona_body`、`install_then_revert_cleans_up` |
+| `shim` 的包装脚本与 PATH 前置 | **已对齐** | Windows `.cmd` / Unix shell；内容不内嵌人设，转发到 `metis launch <h> --exec`（**必须带 `--exec`**，否则只打印计划）；`launch --exec` 继承终端并回传退出码；CLI 模式先 `AttachConsole(ATTACH_PARENT_PROCESS)`，宿主在当前控制台运行而不是另开窗口；解析宿主时跳过 shim 目录避免递归；shim 目录不在 PATH 时 `apply`/GUI 给出提示。证据：`shim::tests::script_forwards_to_metis_and_passes_args`、`install_then_revert_cleans_up`、`which::tests::same_directory_is_recognised`；端到端假 harness 验证 stdin / 退出码 / 同一控制台 |
 | `slash` 的扩展产物 | **已对齐**（6 家） | 语义等价，产物由 Metis 自己实现；数据目录指向 `~/.metis`。证据：`slash::tests::runtime_behaviour_tests_pass`（34 条 JS 行为断言） |
 | `project` 的托管块 | **已对齐** | 支持 `AGENTS.md` / `CLAUDE.md` 等（按 `project_file`）；绝对路径登记、摘除先撤盘。证据：`project::tests::apply_then_revert_restores_bytes` + 真机端到端 |
 | 先发布 `off` 再清理静态内容 | **已对齐** | 证据：`apply::tests::apply_publishes_off_before_touching_channels` |

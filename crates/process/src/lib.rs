@@ -12,13 +12,15 @@
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![deny(missing_docs)]
 
+pub mod interactive;
 pub mod provider;
 pub mod run;
 pub mod which;
 
+pub use interactive::run_interactive;
 pub use provider::{CapturedRequest, FakeProvider, RoleHit};
 pub use run::{Exec, ExecOutcome, StdinPolicy};
-pub use which::{PidProbe, find_program};
+pub use which::{PidProbe, find_program, find_program_excluding};
 
 /// 默认墙钟上限：2 分钟。
 pub const DEFAULT_WALL_CLOCK: std::time::Duration = std::time::Duration::from_secs(120);

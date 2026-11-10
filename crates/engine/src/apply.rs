@@ -366,8 +366,16 @@ fn run_channel(engine: &Engine, harness: &HarnessId, channel: Channel, mode: Mod
             Channel::Shim => {
                 let exe = std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "metis".to_owned());
                 let outcome = metis_channel::shim::install(home, &paths.shim_dir(), harness.as_str(), &exe)?;
-                Ok(ChannelResult::written(harness, channel, if outcome.written { "installed" } else { "unchanged" })
-                    .with_file(outcome.file.display().to_string()))
+                let mut result = ChannelResult::written(harness, channel, if outcome.written { "installed" } else { "unchanged" })
+                    .with_file(outcome.file.display().to_string());
+                // 文件写了 ≠ 裸命令被接管：shim 目录必须在 PATH 最前面，否则系统仍会
+                // 先找到原来的 `claude`。把这件事说清楚（UI 也会显示 remediation）。
+                if !metis_channel::shim::on_path(&paths.shim_dir()) {
+                    let hint = metis_channel::shim::path_hint(&paths.shim_dir());
+                    result.message = Some(format!("{}；{hint}", result.message.unwrap_or_default()));
+                    result.remediation = Some(hint);
+                }
+                Ok(result)
             }
             Channel::Project => {
                 let dirs = state_project_dirs(engine, harness)?;

@@ -1,11 +1,12 @@
 # 打发布包（`scripts/package.ps1`）。
 #
 # 产物（都在 `dist/` 下）：
-#   metis-<版本>-windows-x64.zip      便携包：两个 exe + LICENSE + README
+#   metis-<版本>-windows-x64.zip      便携包：单个 metis.exe（CLI + GUI）+ LICENSE + README
 #   metis-<版本>-windows-x64.zip.sha256
 #
 # 便携包（zip）而不是安装器，理由：
-# - 不写注册表、不需要管理员权限，用户解压即用；
+# - 不写注册表、不需要管理员权限，用户解压即用；唯一例外：GUI 启动时若启用
+#   接管命令且 shim 目录不在 PATH，会写**用户级** PATH（HKCU\Environment）；
 # - 卸载就是删目录（但**撤接管要单独做**，见下面的提醒）；
 # - 安装器（MSI/Inno）需要额外的工具链与签名，等真有用户要求再说。
 #
@@ -41,22 +42,20 @@ Write-Host "▶ 打包 Metis $Version" -ForegroundColor Cyan
 
 # ── 构建 ────────────────────────────────────────────────────
 if (-not $NoBuild) {
-    & cargo build --release -p metis -p metis-gui
+    & cargo build --release -p metis
     if ($LASTEXITCODE -ne 0) { Fail "构建失败" }
 }
 
+# 单可执行文件：CLI 与桌面控制台是同一个 exe（M10.7）。
 $cli = "target/release/metis.exe"
-$gui = "target/release/metis-gui.exe"
-foreach ($exe in @($cli, $gui)) {
-    if (-not (Test-Path $exe)) { Fail "找不到 $exe（先跑 cargo build --release）" }
-}
+if (-not (Test-Path $cli)) { Fail "找不到 $cli（先跑 cargo build --release -p metis）" }
 
 # **打包前必须冒烟**：一个打不开的 exe 打进包里，用户下载后才发现。
 $cliVersion = (& $cli --version 2>&1 | Out-String).Trim()
 if ($cliVersion -notmatch [regex]::Escape($Version)) {
     Fail "exe 报的版本（$cliVersion）与 Cargo.toml（$Version）不一致 —— 先确认构建产物是新的"
 }
-Write-Host "  ✓ CLI 版本一致：$cliVersion"
+Write-Host "  ✓ 版本一致：$cliVersion"
 
 # ── 目录结构 ────────────────────────────────────────────────
 $name = "metis-$Version-windows-x64"
@@ -66,7 +65,6 @@ if (Test-Path $stage) { Remove-Item $stage -Recurse -Force }
 New-Item -ItemType Directory -Force -Path $stage | Out-Null
 
 Copy-Item $cli $stage
-Copy-Item $gui $stage
 Copy-Item "LICENSE-MIT","LICENSE-APACHE" $stage -ErrorAction SilentlyContinue
 Copy-Item "README.md" $stage -ErrorAction SilentlyContinue
 
@@ -76,8 +74,11 @@ Metis $Version — 一份人设，统一管理多个 coding agent
 
 ## 怎么用
 
+    metis.exe                     打开图形控制台（推荐；双击也行）
     metis.exe --help              查看全部命令
-    metis-gui.exe                 打开图形控制台（推荐）
+
+命令行与图形界面是**同一个 exe**：不带任何参数启动就是 GUI，
+带子命令或旗标启动就是 CLI。
 
 首次使用：
 
@@ -90,6 +91,17 @@ Metis $Version — 一份人设，统一管理多个 coding agent
 也可以从官方人设库导入：
 
     metis.exe import dulingzhi/metis-personas
+
+## 接管命令（裸敲即经 Metis 启动）
+
+    metis.exe arm claude --channel shim
+    metis.exe apply
+
+然后把数据目录下的 `shim` 加到 PATH **最前面**，重开终端：
+
+    %USERPROFILE%\.metis\shim
+
+否则系统会先找到原来的 `claude.exe`，接管不会生效（`metis apply` 也会提示）。
 
 ## 卸载（重要）
 

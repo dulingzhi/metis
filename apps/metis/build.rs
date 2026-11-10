@@ -30,11 +30,8 @@ fn embed_windows_resources() {
     let name = std::env::var("CARGO_PKG_NAME").unwrap_or_else(|_| "metis".to_owned());
     let description = std::env::var("CARGO_PKG_DESCRIPTION").unwrap_or_default();
 
-    // 显示的"产品名"：CLI 与 GUI 用不同名字，用户才分得清两个 exe。
-    let product = match name.as_str() {
-        "metis-gui" => "Metis Console",
-        _ => "Metis",
-    };
+    // 产品名：合并后只有一个 exe，CLI 与 GUI 共用同一个名字。
+    let product = "Metis";
 
     let mut resource = winresource::WindowsResource::new();
     resource.set_icon("../../assets/app-icon.ico");

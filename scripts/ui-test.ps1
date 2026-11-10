@@ -49,17 +49,41 @@ if ($status -notmatch '"accessibility":\{"state":"granted"\}') {
 }
 Ok "agent-desktop 可用（accessibility 已授予）"
 
-& cargo build -q -p metis-gui 2>&1 | Out-Null
 & cargo build -q -p metis 2>&1 | Out-Null
-$exe = Join-Path $repo "target/debug/metis-gui.exe"
+$exe = Join-Path $repo "target/debug/metis.exe"
 $cli = Join-Path $repo "target/debug/metis.exe"
-if (-not (Test-Path $exe)) { Fail "找不到 metis-gui"; exit 1 }
+if (-not (Test-Path $exe)) { Fail "找不到 metis"; exit 1 }
 
 # ── 辅助函数 ────────────────────────────────────────────────
 
 # 取一次快照的原文。
+#
+# 用**窗口 ID**：进程可能同时拥有多个顶层窗口，`--app` 的指向不稳定。
 function Snapshot {
-    & agent-desktop snapshot --app "metis-gui" -i --compact 2>&1 | Out-String
+    & agent-desktop snapshot --window-id $script:metisWindowId -i --compact 2>&1 | Out-String
+}
+
+# 把 GUI 窗口提到前台。
+#
+# `press --app` 只把按键送到**前台**窗口；键盘用例前必须聚焦。
+function FocusApp {
+    & agent-desktop focus-window --window-id $script:metisWindowId 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 200
+}
+
+# 按 Ctrl+K 打开命令面板。
+#
+# 按键只送前台窗口，偶尔会被别的窗口抢走（本机多显示器 + 后台任务时实测）。
+# **只在面板仍然关着时重试一次**：如果第一次其实已经打开，再按一次会把它关掉，
+# 所以必须先读一次状态。
+function PressCtrlK {
+    FocusApp
+    & agent-desktop press ctrl+k --app "metis" 2>&1 | Out-Null
+    Start-Sleep -Milliseconds 600
+    if ((Snapshot) -notmatch '输入动作名') {
+        FocusApp
+        & agent-desktop press ctrl+k --app "metis" 2>&1 | Out-Null
+    }
 }
 
 # 在快照里找一个具名节点的 ref 与 role。
@@ -74,6 +98,7 @@ function FindNode([string]$snapshot, [string]$name) {
 
 # 点一个具名控件。返回是否点成功。
 function ClickNamed([string]$name) {
+    FocusApp
     $snap = Snapshot
     $node = FindNode $snap $name
     if (-not $node) { return $false }
@@ -112,8 +137,9 @@ $env:METIS_HOME = $tempHome
 & $cli persona beta --body "严格按用户要求。" --name "乙人设" 2>&1 | Out-Null
 & $cli use alpha 2>&1 | Out-Null
 
-Get-Process metis-gui -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+Get-Process metis -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
 Start-Sleep -Seconds 1
+# 无参数 → GUI（同一个进程，不再拉起子进程）。
 $app = Start-Process -FilePath $exe -PassThru
 Start-Sleep -Seconds 8
 
@@ -128,6 +154,21 @@ if ($app.MainWindowHandle -eq [IntPtr]::Zero) {
     exit 1
 }
 Ok "窗口已打开"
+
+# 钉住 GUI 窗口 ID：后续快照与聚焦都用这个 ID（进程可能有多个顶层窗口）。
+$win = (agent-desktop list-windows 2>&1 | ConvertFrom-Json).data |
+    Where-Object { $_.pid -eq $app.Id -and $_.title -eq 'Metis' } |
+    Select-Object -First 1
+if (-not $win) {
+    Fail "找不到 GUI 窗口（进程 $($app.Id)）"
+    $app | Stop-Process -Force
+    exit 1
+}
+$script:metisWindowId = $win.id
+
+# `press --app` 只把按键送到**前台**窗口：先把 GUI 窗口提到前台。
+FocusApp
+Start-Sleep -Milliseconds 300
 
 try {
     # ── 用例 1：启动时命令面板是关着的 ──────────────────────
@@ -151,7 +192,8 @@ try {
     }
 
     # ── 用例 3：Esc 能关掉（这是用户报过的 bug）─────────────
-    & agent-desktop press escape --app "metis-gui" 2>&1 | Out-Null
+    FocusApp
+    & agent-desktop press escape --app "metis" 2>&1 | Out-Null
     if (WaitForTextGone "输入动作名") {
         Ok "Esc → 面板关闭"
     } else {
@@ -159,13 +201,14 @@ try {
     }
 
     # ── 用例 4：Ctrl+K 能重新打开 ──────────────────────────
-    & agent-desktop press ctrl+k --app "metis-gui" 2>&1 | Out-Null
+    PressCtrlK
     if (WaitForText "输入动作名") {
         Ok "Ctrl+K → 面板打开"
     } else {
         Fail "Ctrl+K 打不开面板"
     }
-    & agent-desktop press escape --app "metis-gui" 2>&1 | Out-Null
+    FocusApp
+    & agent-desktop press escape --app "metis" 2>&1 | Out-Null
     WaitForTextGone "输入动作名" | Out-Null
 
     # ── 用例 5：侧栏四项都是可点击的按钮 ───────────────────
@@ -247,9 +290,9 @@ try {
 
     # ── 用例 10：命令面板执行一个动作后会关闭 ───────────────
     Write-Host "`n▶ 面板执行动作" -ForegroundColor Cyan
-    & agent-desktop press ctrl+k --app "metis-gui" 2>&1 | Out-Null
+    PressCtrlK
     if (WaitForText "输入动作名") {
-        & agent-desktop press enter --app "metis-gui" 2>&1 | Out-Null
+        & agent-desktop press enter --app "metis" 2>&1 | Out-Null
         if (WaitForTextGone "输入动作名") {
             Ok "面板里按 Enter → 执行并关闭"
         } else {
@@ -261,7 +304,7 @@ try {
 }
 finally {
     if (-not $KeepOpen -or $failures.Count -eq 0) {
-        Get-Process metis-gui -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+        Get-Process metis -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
         Remove-Item -Recurse -Force $tempHome -ErrorAction SilentlyContinue
         # GUI 的启动守卫会留一个标记；不清掉下次真启动会误报"上次崩溃"。
         $marker = Join-Path $env:USERPROFILE ".metis\starting"

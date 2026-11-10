@@ -22,12 +22,14 @@ pub struct ShimOutcome {
 /// 脚本只做一件事：把参数原样转交给 `metis launch <harness>`。
 pub fn script_for(harness: &str, metis_exe: &str) -> String {
     if cfg!(windows) {
+        // `--exec` 必须带：`metis launch` 默认只打印命令（dry-run）。
         // `%*` 原样透传全部参数；`exit /b` 保留退出码。
         format!(
-            "@echo off\r\nrem Metis 命令接管：裸敲 {harness} 等于经 Metis 启动，人设启动时读取。\r\n\"{metis_exe}\" launch {harness} %*\r\nexit /b %ERRORLEVEL%\r\n"
+            "@echo off\r\nrem Metis 命令接管：裸敲 {harness} 等于经 Metis 启动，人设启动时读取。\r\n\"{metis_exe}\" launch {harness} --exec %*\r\nexit /b %ERRORLEVEL%\r\n"
         )
     } else {
-        format!("#!/bin/sh\n# Metis 命令接管：裸敲 {harness} 等于经 Metis 启动，人设启动时读取。\nexec \"{metis_exe}\" launch {harness} \"$@\"\n")
+        // `exec` 让 metis 进程被宿主替换，退出码与信号语义都保持原样。
+        format!("#!/bin/sh\n# Metis 命令接管：裸敲 {harness} 等于经 Metis 启动，人设启动时读取。\nexec \"{metis_exe}\" launch {harness} --exec \"$@\"\n")
     }
 }
 
@@ -105,6 +107,8 @@ mod tests {
         let script = script_for("codex", "C:\\bin\\metis.exe");
         assert!(script.contains("metis.exe"), "必须指向 metis 可执行文件");
         assert!(script.contains("launch codex"));
+        // 不带 `--exec` 的话 `launch` 只打印计划，接管等于没生效。
+        assert!(script.contains("--exec"), "必须真的启动宿主，而不是只打印命令");
         if cfg!(windows) {
             assert!(script.contains("%*"), "Windows 脚本必须透传参数");
             assert!(script.contains("ERRORLEVEL"), "必须保留退出码");

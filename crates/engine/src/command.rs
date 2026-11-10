@@ -137,7 +137,9 @@ impl Commands {
         commands.register(state::SetPower);
         commands.register(state::SetArmed);
         commands.register(state::ArmChannel);
+        commands.register(state::EnsureShimPath);
         commands.register(persona::ListPersonas);
+        commands.register(persona::ShowPersona);
         commands.register(persona::SavePersona);
         commands.register(persona::RemovePersona);
         commands.register(apply::ApplyNow);
@@ -419,6 +421,53 @@ pub mod state {
         }
     }
 
+    /// 把 `shim` 目录写进**用户级 PATH**（Windows：`HKCU\Environment`）。
+    ///
+    /// 裸命令接管的前提是 shim 目录在 PATH 最前面。GUI 启动时如果已经武装了
+    /// shim、但目录不在 PATH，会自动调用这条命令。只写用户级、不写系统级、
+    /// 不需要管理员权限；幂等。
+    #[derive(Debug)]
+    pub struct EnsureShimPath;
+
+    impl Command for EnsureShimPath {
+        fn id(&self) -> &'static str {
+            "channel.shim-path"
+        }
+        fn title(&self) -> &'static str {
+            "channel.shim-path.title"
+        }
+        fn effects(&self) -> Effects {
+            // 写用户环境变量（注册表）+ 起一次 PowerShell 广播 WM_SETTINGCHANGE。
+            Effects { writes_disk: true, spawns_process: true, network: false }
+        }
+        fn run(&self, engine: &Engine, params: &Value) -> Result<CommandOutput> {
+            let dir = engine.paths().shim_dir();
+            if metis_channel::shim::on_path(&dir) {
+                return Ok(CommandOutput::Message("shim 目录已经在 PATH 里".to_owned()));
+            }
+            if !cfg!(windows) {
+                // Unix 上没有"用户级 PATH"这种可移植的持久化位置；不碰用户的 rc 文件。
+                return Ok(CommandOutput::Message(metis_channel::shim::path_hint(&dir)));
+            }
+            let script = super::shim_path_script(&dir);
+            if params.get("dryRun").and_then(|v| v.as_bool()).unwrap_or(false) {
+                return Ok(CommandOutput::Message(script));
+            }
+            let outcome = metis_process::Exec::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", script.as_str()])
+                .run()?;
+            let text = outcome.stdout.trim();
+            if text.ends_with("CHANGED") {
+                Ok(CommandOutput::Message(format!("已把 {} 加到用户 PATH 最前面；重开终端后生效", dir.display())))
+            } else if text.ends_with("PRESENT") {
+                Ok(CommandOutput::Message(format!("{} 已经在用户 PATH 里", dir.display())))
+            } else {
+                Err(MetisError::new(ErrorKind::Io, format!("写入用户 PATH 失败：{text}"))
+                    .with_remediation("手动把该目录加到 PATH 最前面，或检查 PowerShell 是否可用"))
+            }
+        }
+    }
+
     /// 撤下一条通道已经写到磁盘上的内容。没有落点或没写过时是空操作。
     fn revert_channel(engine: &Engine, harness: &HarnessId, channel: Channel) -> Result<()> {
         let paths = engine.paths();
@@ -516,6 +565,42 @@ pub mod persona {
             Ok(CommandOutput::Json(serde_json::json!({
                 "personas": items,
                 "errors": errors.iter().map(|e| serde_json::json!({ "path": e.path.display().to_string(), "message": e.message })).collect::<Vec<_>>(),
+            })))
+        }
+    }
+
+    /// 查看一份人设的完整内容（正文 + 元数据）。
+    ///
+    /// 只读：列表里只带名称/说明，正文可能上万字，所以详情单独取
+    /// （GUI 浮层与 `metis show` 共用）。
+    #[derive(Debug)]
+    pub struct ShowPersona;
+
+    impl Command for ShowPersona {
+        fn id(&self) -> &'static str {
+            "persona.show"
+        }
+        fn title(&self) -> &'static str {
+            "persona.show.title"
+        }
+        fn run(&self, engine: &Engine, params: &Value) -> Result<CommandOutput> {
+            let id = PersonaId::parse(&required_str(params, "persona")?)?;
+            let store = metis_persona::PersonaStore::new(engine.paths().clone());
+            let Some(persona) = store.read(&id)? else {
+                return Err(MetisError::new(ErrorKind::InvalidArgument, format!("人设不存在：{id}")).with_remediation("用 `metis ls` 查看可用的人设 id"));
+            };
+            let active = engine.state()?.persona;
+            Ok(CommandOutput::Json(serde_json::json!({
+                "id": persona.id.as_str(),
+                "name": persona.display_name(),
+                "description": persona.description(),
+                "chars": persona.char_count(),
+                "active": active.as_deref() == Some(persona.id.as_str()),
+                "path": persona.path.display().to_string(),
+                "body": persona.body,
+                "harness": persona.meta.harness,
+                "model": persona.meta.model,
+                "warnings": persona.warnings,
             })))
         }
     }
@@ -680,9 +765,60 @@ pub mod harness {
                     })
                 })
                 .collect();
-            Ok(CommandOutput::Json(serde_json::json!({ "harnesses": items })))
+            // shim 是否真的能被裸命令命中，取决于它的目录在不在 PATH 最前面。
+            // 界面要能据此提示用户，所以把这两项一起带出去（不让 UI 自己读环境变量）。
+            let shim_dir = engine.paths().shim_dir();
+            Ok(CommandOutput::Json(serde_json::json!({
+                "harnesses": items,
+                "shim": {
+                    "dir": shim_dir.display().to_string(),
+                    "onPath": metis_channel::shim::on_path(&shim_dir),
+                },
+            })))
         }
     }
+}
+
+/// 生成"把 shim 目录插到用户 PATH 最前面"的 PowerShell 脚本。
+///
+/// 为什么不用 `setx`：它会在 1024 字符处截断 PATH，而且写回的是普通字符串，
+/// 会把 `%USERPROFILE%` 这类变量展开成固定路径。
+/// 这里用注册表 API：
+/// - `DoNotExpandEnvironmentNames` 读原值，保留变量原文；
+/// - `GetValueKind` + `SetValue(..., kind)` 保留 `REG_EXPAND_SZ`；
+/// - 插入后广播 `WM_SETTINGCHANGE`，新开的终端才会读到新值；
+/// - 目录已存在（忽略大小写与末尾分隔符）时幂等返回 `PRESENT`。
+fn shim_path_script(dir: &std::path::Path) -> String {
+    let dir = dir.display().to_string().replace('\'', "''");
+    format!(
+        r#"$ErrorActionPreference = 'Stop'
+$dir = '{dir}'
+$key = [Microsoft.Win32.Registry]::CurrentUser.OpenSubKey('Environment', $true)
+if ($null -eq $key) {{ Write-Output 'ERROR:no-environment-key'; exit 1 }}
+$raw = ''
+$kind = [Microsoft.Win32.RegistryValueKind]::ExpandString
+try {{
+  $raw = [string]$key.GetValue('Path', '', [Microsoft.Win32.RegistryValueOptions]::DoNotExpandEnvironmentNames)
+  $kind = $key.GetValueKind('Path')
+}} catch {{ }}
+$entries = if ($raw) {{ $raw -split ';' }} else {{ @() }}
+$rest = @()
+foreach ($entry in $entries) {{
+  if ($entry.Trim().TrimEnd('\') -ieq $dir.TrimEnd('\')) {{ continue }}
+  $rest += $entry
+}}
+$first = $false
+if ($entries.Count -gt 0) {{ $first = $entries[0].Trim().TrimEnd('\') -ieq $dir.TrimEnd('\') }}
+if ($first) {{ $key.Close(); Write-Output 'PRESENT'; exit 0 }}
+$new = if ($rest.Count -gt 0) {{ "$dir;" + ($rest -join ';') }} else {{ $dir }}
+$key.SetValue('Path', $new, $kind)
+$key.Close()
+Add-Type -Namespace Metis -Name Win -MemberDefinition '[DllImport("user32.dll", SetLastError=true, CharSet=CharSet.Auto)] public static extern IntPtr SendMessageTimeout(IntPtr hWnd, uint Msg, IntPtr wParam, string lParam, uint fuFlags, uint uTimeout, out IntPtr lpdwResult);'
+$result = [IntPtr]::Zero
+[Metis.Win]::SendMessageTimeout([IntPtr]0xffff, 0x001A, [IntPtr]::Zero, 'Environment', 2, 1000, [ref]$result) | Out-Null
+Write-Output 'CHANGED'
+"#
+    )
 }
 
 #[cfg(test)]
@@ -695,6 +831,31 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let engine = Engine::new(Paths::with_home(dir.path().join("home")));
         (dir, engine, Commands::default_set())
+    }
+
+    #[test]
+    fn shim_path_script_preserves_registry_kind_and_broadcasts() {
+        let script = shim_path_script(std::path::Path::new(r"C:\Users\example\.metis\shim"));
+        for needle in ["DoNotExpandEnvironmentNames", "GetValueKind", "SetValue('Path'", "SendMessageTimeout", "PRESENT", "CHANGED"] {
+            assert!(script.contains(needle), "脚本缺少 {needle}：{script}");
+        }
+        assert!(script.contains(r"C:\Users\example\.metis\shim"), "脚本必须带上 shim 目录");
+    }
+
+    #[test]
+    fn shim_path_script_escapes_single_quotes_in_the_directory() {
+        let script = shim_path_script(std::path::Path::new(r"C:\Users\o'brien\.metis\shim"));
+        assert!(script.contains(r"C:\Users\o''brien\.metis\shim"), "单引号必须转义，否则 PowerShell 语法会坏");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ensure_shim_path_dry_run_returns_the_script_without_writing() {
+        // 真跑会改用户 PATH；测试只允许 dryRun。
+        let (_dir, engine, commands) = setup();
+        let output = commands.run("channel.shim-path", &engine, &json!({"dryRun": true})).expect("dry-run");
+        let CommandOutput::Message(text) = output else { panic!("应该是 Message") };
+        assert!(text.contains("DoNotExpandEnvironmentNames"), "{text}");
     }
 
     #[test]
@@ -743,6 +904,33 @@ mod tests {
         assert_eq!(json["personas"][0]["id"], "concise");
         assert_eq!(json["personas"][0]["name"], "简洁");
         assert_eq!(json["personas"][0]["active"], true);
+    }
+
+    #[test]
+    fn persona_show_returns_the_body_and_metadata() {
+        let (_dir, engine, commands) = setup();
+        commands.run("persona.save", &engine, &json!({"persona": "concise", "body": "# 正文\n\n内容", "name": "简洁", "description": "先结论"})).expect("save");
+        commands.run("persona.use", &engine, &json!({"persona": "concise"})).expect("use");
+
+        let output = commands.run("persona.show", &engine, &json!({"persona": "concise"})).expect("show");
+        let json = output.to_json();
+        assert_eq!(json["id"], "concise");
+        assert_eq!(json["name"], "简洁");
+        assert_eq!(json["description"], "先结论");
+        assert_eq!(json["body"], "# 正文\n\n内容");
+        assert_eq!(json["chars"], "# 正文\n\n内容".chars().count());
+        assert_eq!(json["active"], true);
+        assert!(json["path"].as_str().unwrap_or_default().ends_with("concise.md"), "{}", json["path"]);
+        assert_eq!(json["warnings"], json!([]));
+    }
+
+    #[test]
+    fn persona_show_rejects_a_missing_id_as_invalid_argument() {
+        let (_dir, engine, commands) = setup();
+        let error = commands.run("persona.show", &engine, &json!({"persona": "ghost"})).expect_err("must fail");
+        // 名字写错属于调用方传参问题（退出码 2），不是运行时故障。
+        assert_eq!(error.kind(), ErrorKind::InvalidArgument);
+        assert!(error.remediation().unwrap_or_default().contains("metis ls"));
     }
 
     #[test]

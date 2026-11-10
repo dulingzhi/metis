@@ -1,9 +1,15 @@
-//! Metis 桌面控制台。
+//! Metis 桌面控制台的装配层（eframe 壳）。
 //!
-//! 顺序与理由见 `docs/DEVELOPMENT.md` §4。
+//! **不是一个独立可执行文件**：`apps/metis` 在无参数启动时调用 [`run`]，
+//! 把 CLI 与 GUI 合并成同一个 `metis` 二进制（见 `docs/DEVELOPMENT.md` §4）。
+//!
+//! 顺序与理由：
+//! 1. 数据目录（`METIS_HOME` > `~/.metis`）；
+//! 2. 启动守卫（上次没到窗口就提示）；
+//! 3. eframe 启动（窗口参数、图标、DPI、持久化）；
+//! 4. 窗口前的 panic 转成可读错误。
 
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 // 启动失败时要能在终端说清原因（docs/DEVELOPMENT.md §4 第 9 步）。
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
@@ -15,14 +21,12 @@ use metis_engine::Engine;
 use metis_paths::Paths;
 use metis_ui_egui::{MetisApp, Tokens};
 
-fn main() -> eframe::Result {
-    // ① 版本早退：打包脚本与用户都靠它核对版本，不起窗口。
-    if wants_version(std::env::args().skip(1)) {
-        println!("metis-gui {}", env!("CARGO_PKG_VERSION"));
-        return Ok(());
-    }
-
-    // ② 数据目录：`METIS_HOME` > `~/.metis`。
+/// 启动桌面控制台，阻塞到窗口关闭。
+///
+/// 合并后的入口由 `apps/metis` 分发：无参数时调用这里（同一进程开窗）。
+/// `--version` / `--help` 由 CLI 的 clap 处理，不会走到这里。
+pub fn run() -> eframe::Result {
+    // ① 数据目录：`METIS_HOME` > `~/.metis`。
     let paths = match Paths::from_env() {
         Ok(paths) => paths,
         Err(error) => {
@@ -34,7 +38,7 @@ fn main() -> eframe::Result {
         }
     };
 
-    // ③ 启动守卫：上次启动没到窗口，说明可能是原生层崩溃；本次提示用户。
+    // ② 启动守卫：上次启动没到窗口，说明可能是原生层崩溃；本次提示用户。
     let mut guard = StartGuard::begin(&paths);
     let software = guard.previous_start_failed();
 
@@ -43,7 +47,7 @@ fn main() -> eframe::Result {
     let shown = Arc::new(AtomicBool::new(false));
     let shown_by_app = shown.clone();
 
-    // ④ catch_unwind：窗口显示之前的 panic 转成错误，之后的原样抛出。
+    // ③ catch_unwind：窗口显示之前的 panic 转成错误，之后的原样抛出。
     let previous_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         previous_hook(info);
@@ -87,14 +91,6 @@ fn main() -> eframe::Result {
         }
         Err(payload) => std::panic::resume_unwind(payload),
     }
-}
-
-/// 参数里有没有版本旗标。
-///
-/// 抽成函数是为了能被测试：打包脚本与用户都靠 `--version` 核对版本，
-/// 这条路径不能因为"它只是两行"就不测。
-fn wants_version(args: impl Iterator<Item = String>) -> bool {
-    args.into_iter().any(|arg| arg == "--version" || arg == "-V")
 }
 
 fn native_options(_software: bool) -> eframe::NativeOptions {
@@ -226,29 +222,6 @@ mod tests {
         ensure_dir(&nested).expect("first");
         ensure_dir(&nested).expect("second");
         assert!(nested.is_dir());
-    }
-}
-
-#[cfg(test)]
-mod arg_tests {
-    use super::*;
-
-    fn args(items: &[&str]) -> std::vec::IntoIter<String> {
-        items.iter().map(|s| (*s).to_owned()).collect::<Vec<_>>().into_iter()
-    }
-
-    #[test]
-    fn version_flags_are_recognised() {
-        assert!(wants_version(args(&["--version"])));
-        assert!(wants_version(args(&["-V"])));
-        assert!(wants_version(args(&["--other", "--version"])));
-    }
-
-    #[test]
-    fn other_arguments_do_not_trigger_version() {
-        assert!(!wants_version(args(&[])));
-        assert!(!wants_version(args(&["--help"])));
-        assert!(!wants_version(args(&["version"])));
     }
 }
 

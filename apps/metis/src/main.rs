@@ -1,19 +1,34 @@
-//! Metis CLI。
+//! Metis 单可执行文件入口：CLI 与桌面控制台共用。
 //!
-//! 只做三件事：解析命令行 → 组装参数 → 调引擎命令。**不写业务分支**（AGENTS.md 铁律 6）。
+//! 分发规则（`docs/DEVELOPMENT.md` §4）：
+//! - **无参数** → 桌面控制台（双击即用）；
+//! - **有子命令/旗标** → CLI（`--help` / `--version` 仍由 clap 处理）。
+//!
+//! Windows 上整个 exe 是 **GUI 子系统**：双击 GUI 不会出现控制台窗口。
+//! CLI 模式依赖进程启动时继承的 stdio 句柄 —— 从终端/管道/harness 启动时
+//! 句柄都是有效的，输出与退出码照常（见 `docs/PITFALLS.md` G92）。
+//!
+//! CLI 路径只做三件事：解析命令行 → 组装参数 → 调引擎命令。**不写业务分支**（AGENTS.md 铁律 6）。
 
+// GUI 子系统：双击时不分配控制台窗口。CLI 的输出靠继承的 stdio 句柄。
+// 非 Windows 平台该属性无效果。
+#![cfg_attr(windows, windows_subsystem = "windows")]
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
 #![deny(missing_docs)]
 // CLI 的职责就是把结果打印到 stdout/stderr。
 #![allow(clippy::print_stdout, clippy::print_stderr)]
 
+use std::ffi::OsString;
 use std::process::ExitCode;
 
 use clap::{Parser, Subcommand};
 use metis_engine::{CommandOutput, Commands, Engine};
 use metis_paths::Paths;
 
-/// 一份人设，统一管理多个 coding agent。
+#[cfg(windows)]
+mod win_console;
+
+/// 一份人设，统一管理多个 coding agent。不带参数启动桌面控制台，带子命令走 CLI。
 #[derive(Debug, Parser)]
 #[command(name = "metis", version, about, long_about = None)]
 pub struct Cli {
@@ -41,6 +56,11 @@ pub enum Command {
     Status,
     /// 列出人设。
     Ls,
+    /// 查看一份人设的完整内容（正文 + 元数据）。
+    Show {
+        /// 人设 id。
+        id: String,
+    },
     /// 换人设。
     Use {
         /// 人设 id。**不写就打印当前人设与全部例外**（与基线一致）。
@@ -394,9 +414,22 @@ pub enum HubSkillAction {
 }
 
 fn main() -> ExitCode {
+    // 无参数：桌面控制台。**同一个进程**里开窗，不重新拉起子进程。
+    if launch_kind(std::env::args_os().skip(1)) == Launch::Gui {
+        return run_gui();
+    }
+
+    // CLI 模式：exe 是 GUI 子系统，默认不关联父控制台；不关联的话，`launch --exec`
+    // 起的 claude/codex 等 console 子进程会被 Windows 分配一个**新**控制台窗口。
+    // 关联之后子进程继承当前控制台（见 `win_console`）。
+    #[cfg(windows)]
+    {
+        win_console::attach_parent_console();
+    }
+
     let cli = Cli::parse();
     match run(cli) {
-        Ok(()) => ExitCode::SUCCESS,
+        Ok(code) => code,
         Err(error) => {
             eprintln!("✗ {}", error.message());
             if let Some(remediation) = error.remediation() {
@@ -406,6 +439,32 @@ fn main() -> ExitCode {
                 eprintln!("  ({detail})");
             }
             ExitCode::from(exit_code_for(error.kind()))
+        }
+    }
+}
+
+/// 这次调用该走哪条路。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Launch {
+    /// 有子命令或旗标：CLI。
+    Cli,
+    /// 无参数：桌面控制台。
+    Gui,
+}
+
+/// 纯函数，便于测试：参数里**没有**任何东西 → GUI；其余 → CLI。
+fn launch_kind(args: impl Iterator<Item = OsString>) -> Launch {
+    let args: Vec<OsString> = args.collect();
+    if args.is_empty() { Launch::Gui } else { Launch::Cli }
+}
+
+/// 启动桌面控制台（在同一进程里开窗）。
+fn run_gui() -> ExitCode {
+    match metis_gui::run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("✗ 桌面控制台退出：{error}");
+            ExitCode::from(1)
         }
     }
 }
@@ -429,7 +488,7 @@ fn exit_code_for(kind: metis_core::ErrorKind) -> u8 {
     }
 }
 
-fn run(cli: Cli) -> metis_core::Result<()> {
+fn run(cli: Cli) -> metis_core::Result<ExitCode> {
     let paths = match &cli.home {
         Some(home) => Paths::with_home(home),
         None => Paths::from_env()?,
@@ -439,7 +498,7 @@ fn run(cli: Cli) -> metis_core::Result<()> {
 
     let Some(command) = cli.command else {
         print_help();
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     };
 
     // `--lang` 只接受已知语言；拼错要报错，而不是静默用默认（PITFALLS G12）。
@@ -454,18 +513,25 @@ fn run(cli: Cli) -> metis_core::Result<()> {
     // `i18n` 子命令读的是编译进来的文案表，不走命令注册表。
     if let Command::I18n { all } = &command {
         print_i18n(*all, cli.lang.as_deref());
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
 
     // 有些子命令不产生命令调用（`metis use` 不带 id 就是"查"）。
     if early_exit(&command, &commands, &engine)? {
-        return Ok(());
+        return Ok(ExitCode::SUCCESS);
     }
 
     let (id, params) = translate(command)?;
+    // 交互式启动把终端交给宿主：既不打印 JSON 摘要，也要把宿主的退出码带回去
+    // （shim 的 `exit /b %ERRORLEVEL%` 依赖它）。
+    let interactive_launch = id == "harness.launch" && params.get("exec").and_then(|v| v.as_bool()) == Some(true);
     let output = commands.run(id, &engine, &params)?;
+    if interactive_launch {
+        let code = output.to_json().get("exitCode").and_then(|v| v.as_i64()).unwrap_or(0);
+        return Ok(ExitCode::from(code.clamp(0, 255) as u8));
+    }
     emit(&output, cli.json);
-    Ok(())
+    Ok(ExitCode::SUCCESS)
 }
 
 fn print_help() {
@@ -474,6 +540,7 @@ fn print_help() {
     println!("  metis status            查看当前配置");
     println!("  metis harnesses         查看本机可接管的执行器");
     println!("  metis ls                列出人设");
+    println!("  metis show <id>         查看一份人设的正文");
     println!("  metis hub list|show|import  远端人设库（worldd / KK Hub）");
     println!("  metis use <id>          换人设");
     println!("  metis mode <m>          换模式（replace / strict / append / off）");
@@ -489,6 +556,7 @@ fn translate(command: Command) -> metis_core::Result<(&'static str, serde_json::
     Ok(match command {
         Command::Status => ("state.status", json!({})),
         Command::Ls => ("persona.list", json!({})),
+        Command::Show { id } => ("persona.show", json!({ "persona": id })),
         Command::Use { persona, r#for } => {
             let mut params = json!({});
             if let Some(persona) = persona {
@@ -876,6 +944,13 @@ fn emit(output: &CommandOutput, json: bool) {
             for failure in report.failures() {
                 println!("  ✗ {} · {}：{}", failure.harness, failure.channel, failure.error.clone().unwrap_or_default());
             }
+            // 成功但有前提条件的条目（例如 shim 目录不在 PATH）必须说出来，
+            // 否则用户会以为"点了启用就生效了"。
+            for result in report.results.iter().filter(|r| !r.is_failed()) {
+                if let Some(hint) = &result.remediation {
+                    println!("  ! {} · {}：{hint}", result.harness, result.channel);
+                }
+            }
             println!("  注意：配置写入不等于当前会话已生效。");
         }
     }
@@ -910,9 +985,47 @@ fn print_human(value: &serde_json::Value) {
         }
         return;
     }
+    // `persona.show`：元数据一行，正文原样打印（方便重定向到文件）。
+    if let Some(body) = value.get("body").and_then(|v| v.as_str()) {
+        let id = value.get("id").and_then(|v| v.as_str()).unwrap_or("-");
+        let name = value.get("name").and_then(|v| v.as_str()).unwrap_or("");
+        let chars = value.get("chars").and_then(|v| v.as_u64()).unwrap_or(0);
+        let active = value.get("active").and_then(|v| v.as_bool()).unwrap_or(false);
+        println!("{name}（{id}）· {chars} 字{}", if active { " · 当前" } else { "" });
+        if let Some(description) = value.get("description").and_then(|v| v.as_str()) {
+            println!("{description}");
+        }
+        if let Some(path) = value.get("path").and_then(|v| v.as_str()) {
+            println!("{path}");
+        }
+        println!();
+        println!("{body}");
+        return;
+    }
     println!("{}", serde_json::to_string_pretty(value).unwrap_or_default());
 }
 
 fn mark(ok: bool) -> &'static str {
     if ok { "✓" } else { "—" }
+}
+
+#[cfg(test)]
+mod launch_tests {
+    use super::*;
+
+    fn args(items: &[&str]) -> std::vec::IntoIter<OsString> {
+        items.iter().map(OsString::from).collect::<Vec<_>>().into_iter()
+    }
+
+    #[test]
+    fn no_arguments_open_the_gui() {
+        assert_eq!(launch_kind(args(&[])), Launch::Gui, "双击（无参数）应打开桌面控制台");
+    }
+
+    #[test]
+    fn any_subcommand_or_flag_stays_on_the_cli() {
+        for invocation in [&["status"][..], &["--help"], &["--version"], &["--json"], &["--home", "C:/tmp"]] {
+            assert_eq!(launch_kind(args(invocation)), Launch::Cli, "{invocation:?} 不该打开 GUI");
+        }
+    }
 }

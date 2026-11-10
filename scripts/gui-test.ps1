@@ -2,7 +2,7 @@
 #
 # 为什么需要它：GUI 的正确性有三层，`cargo test` 只覆盖前两层。
 #   1. **逻辑层** —— `metis-ui-egui` 的无头渲染测试（`cargo test -p metis-ui-egui`）
-#   2. **装配层** —— `metis-gui` 的启动守卫 / 窗口参数 / 版本旗标（`cargo test -p metis-gui`）
+#   2. **装配层** —— `metis` 的启动守卫 / 窗口参数 / 版本旗标（`cargo test -p metis-gui`）
 #   3. **真机层** —— 窗口真的能开、真的画出了东西、截图不是全白
 # 第 3 层只有真的起一个窗口才能验，而且**必须用截图字节数做断言**：
 # 控件被挤出可视区不会 panic，测试不会红（`docs/PITFALLS.md` G37/G38）。
@@ -54,31 +54,31 @@ if ($LASTEXITCODE -ne 0) {
 # ─────────────────────────────────────────────────────────────
 # 第 2 层：装配（二进制自己的逻辑）
 # ─────────────────────────────────────────────────────────────
-Write-Host "`n▶ 第 2 层：metis-gui 装配测试" -ForegroundColor Cyan
+Write-Host "`n▶ 第 2 层：metis 装配测试" -ForegroundColor Cyan
 & cargo test -q -p metis-gui 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
     Fail "cargo test -p metis-gui 失败"
 } else {
-    Ok "启动守卫 / 窗口参数 / 版本旗标测试通过"
+    Ok "启动守卫 / 窗口参数测试通过"
 }
 
-& cargo build -q -p metis-gui 2>&1 | Out-Null
+& cargo build -q -p metis 2>&1 | Out-Null
 if ($LASTEXITCODE -ne 0) {
-    Fail "metis-gui 构建失败"
+    Fail "metis 构建失败"
     Write-Host "`n共 $($failures.Count) 项失败" -ForegroundColor Red
     exit 1
 }
 
-$exe = Join-Path $repo "target/debug/metis-gui.exe"
-if (-not (Test-Path $exe)) { $exe = Join-Path $repo "target/debug/metis-gui" }
+$exe = Join-Path $repo "target/debug/metis.exe"
+if (-not (Test-Path $exe)) { $exe = Join-Path $repo "target/debug/metis" }
 if (-not (Test-Path $exe)) {
-    Fail "找不到 metis-gui 可执行文件"
+    Fail "找不到 metis 可执行文件"
     exit 1
 }
 
 # 版本旗标：打包脚本依赖它，必须不起窗口就返回
 $versionOut = & $exe --version 2>&1
-if ($LASTEXITCODE -eq 0 -and $versionOut -match '^metis-gui \d+\.\d+\.\d+') {
+if ($LASTEXITCODE -eq 0 -and $versionOut -match '^metis \d+\.\d+\.\d+') {
     Ok "--version 立即返回且格式正确（$versionOut）"
 } else {
     Fail "--version 输出不符合预期：$versionOut"
@@ -109,7 +109,7 @@ public class MetisGuiProbe {
 "@
 
     # 用独立的临时 home，绝不碰真实 ~/.metis
-    $tempHome = Join-Path ([System.IO.Path]::GetTempPath()) ("metis-gui-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
+    $tempHome = Join-Path ([System.IO.Path]::GetTempPath()) ("metis-test-" + [guid]::NewGuid().ToString("N").Substring(0, 8))
     New-Item -ItemType Directory -Force -Path $tempHome | Out-Null
     $env:METIS_HOME = $tempHome
 
@@ -133,6 +133,7 @@ public class MetisGuiProbe {
         $storage = Join-Path $env:APPDATA "dev.metis.console\data"
         if (Test-Path $storage) { Remove-Item $storage -Force -ErrorAction SilentlyContinue }
 
+        # 无参数 → GUI（同一个进程，不重新拉起）。
         $proc = Start-Process -FilePath $exe -PassThru -WindowStyle Normal
         Start-Sleep -Seconds 6
         $proc.Refresh()

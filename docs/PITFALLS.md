@@ -1060,6 +1060,112 @@
 
 
 
+### G89. 嵌套 `ScrollArea` / `Area` 里只设 `max_height`，滚动区会被压成一条缝
+- **现象**：远端库结果列表只有 ~130px 高（20 条结果只看得见 2 条）；详情浮层
+  标题和标签之后被齐刷刷裁掉，作者/来源/提示词全不见 —— 用户报"列表还是太低，
+  详情缺少内容"。
+- **原因**：`ScrollArea::max_height` 只是**上限**，实际高度还会被
+  `ui.available_rect_before_wrap()` 截断。列表嵌在人设库整页的 `ScrollArea` 里，
+  可用高度 = 页面剩余可视空间；详情正文嵌在 `Area` 里，而 `Area` 的可用高度
+  来自**上一帧的尺寸**。后一种会形成反馈：浮层上一帧越小，正文滚动区能拿到的高度
+  越小，下一帧浮层又更小，最终锁死在 `min_scrolled_size`（默认 64）。
+- **规则**：在嵌套滚动区里同时设 `max_height(x)` **和** `min_scrolled_height(x)`，
+  让高度与"父容器剩多少"脱钩；`auto_shrink([false, true])` 仍会让短内容收缩。
+  对应回归测试：`the_hub_list_keeps_its_height_inside_the_page_scroll`、
+  `the_hub_detail_overlay_keeps_its_body_height`。
+
+### G90. GUI 正在运行时，`cargo build --release` 覆盖不了 `metis-gui.exe`
+- **现象**：`error: failed to remove target\release\metis-gui.exe` / `拒绝访问 (os error 5)`。
+- **原因**：Windows 会锁住正在执行的镜像文件；cargo 写新产物前必须先删除旧文件。
+- **规则**：改 GUI 后先关掉正在跑的窗口再构建。**不要为了构建去杀用户的窗口**；
+  确实不能关时，用 `Move-Item metis-gui.exe metis-gui.exe.old` 把旧文件改名
+  （Windows 允许重命名运行中的 exe），构建后再让用户关闭旧实例并删掉 `.old`。
+  打包前 `scripts/package.ps1` 的版本烟测必须通过。
+
+### G91. rustup stable 通道卡在 `llc.exe` 冲突或“downloading 9 components”
+- **现象**：`failed to install component 'llvm-tools-preview', detected conflict:
+  lib\rustlib\...\bin\llc.exe`；或下载阶段长时间 CPU/文件大小都不变（实测 40 分钟无进展）。
+- **原因**：上一次 llvm-tools 安装中断留下**未登记**的 `llc.exe`，rustup 无法用
+  `component remove` 清掉；另外国内直连 `static.rust-lang.org` 极慢（实测 15s 只拿到响应头）。
+- **规则**：先 `rustup toolchain uninstall stable-x86_64-pc-windows-msvc` 整条重装；
+  下载走镜像（`RUSTUP_DIST_SERVER=https://mirrors.tuna.tsinghua.edu.cn/rustup`、
+  `RUSTUP_UPDATE_ROOT=.../rustup`）；先装 `--profile minimal`，再用
+  `rustup component add` 逐个补 `rustfmt clippy rust-docs rust-src llvm-tools-preview`，
+  最后 `rustup target add i686-pc-windows-msvc`。不要并发跑多个 rustup 安装。
+
+### G92. 单 exe 同时做 CLI 与 GUI：选 GUI 子系统，CLI 靠继承的 stdio
+- **现象**：用控制台子系统，双击 GUI 会带一个黑框（实测父进程存活 0.38–0.51s，隐藏也只能缩短）；
+  用 GUI 子系统，又担心 CLI 在终端里没有输出。
+- **实测结论**（Windows 11）：
+  - GUI 子系统进程从终端启动时**继承 stdio 句柄**：cmd、PowerShell 管道、CI/harness
+    都能收到输出；`$LASTEXITCODE` 在管道调用后是正确值（实测失败命令 = 2）。
+  - cmd 会等待 GUI 进程（`cmd /c "metis.exe --version"` 正常）；
+  - **PowerShell 的 `>` 重定向不等待** GUI 进程：`metis --version > out.txt` 得到空文件；
+    用管道（`| Out-String`）或 `Start-Process -Wait -RedirectStandardOutput`。
+- **规则**：单 exe 链接为 **GUI 子系统**（`#![cfg_attr(windows, windows_subsystem = "windows")]`），
+  无参数在**同一进程**开 GUI，有参数走 CLI；不要重新拉起子进程，也不要在 CLI 路径上初始化 GUI。
+  自检：`launch_tests::*`（无参数→GUI、有参数→CLI）+ `apps/metis/tests/cli.rs` 的管道 e2e。
+
+### G93. GUI 子系统 + `#![windows_subsystem]` 后，测试脚本要按窗口 ID 操作
+- **现象**：脚本用 `--app "metis"` 快照/聚焦时偶发指错窗口或键盘按键送不到，失败点每轮漂移。
+- **原因**：`press --app` 只把按键送到**前台**窗口；`--app` 只能按进程名匹配，进程有多个顶层窗口时不稳。
+- **规则**：`scripts/ui-test.ps1` 启动后用 `list-windows` 找到标题为 `Metis` 的 GUI 窗口 ID，
+  之后快照与聚焦一律用 `--window-id`，每个键盘交互前 `focus-window --window-id`；
+  无参数启动不再有控制台窗口，双击路径无需额外处理。
+
+### G94. 「接管命令」写了 shim 文件，但裸命令仍然走原程序
+- **现象**：`metis arm claude --channel shim` + `apply` 成功，`~/.metis/shim/claude.cmd` 也生成了，
+  但裸敲 `claude` 仍然启动原程序；把 shim 目录加进 PATH 后又可能无限递归，或者新增的会话没有输入；
+  GUI 里点「启用」后甚至**根本没有生成 shim 文件**。
+- **原因**（缺一个都不生效）：
+  1. **shim 目录不在 PATH 最前面**：Windows 先按 PATHEXT 找 `claude.exe`，`~/.metis/shim/claude.cmd`
+     根本轮不到；Metis 不能替用户改持久化 PATH，只能提示。
+  2. **脚本没带 `--exec`**：`metis launch <h>` 默认是 dry-run（只打印将执行的命令），
+     包装脚本必须写 `launch <h> --exec`。
+  3. **`--exec` 用了捕获式 `Exec`**：stdin 关闭、stdout/stderr 被管道接走，交互式 TUI 直接不可用；
+     交互式启动必须继承终端（`metis-process::run_interactive`，铁律 11 的唯一例外）。
+  4. **递归**：shim 调 `metis launch`，而 `launch` 又按 PATH 找 `claude` —— 第一项就是 shim 自己。
+     解析宿主时必须 `find_program_excluding(program, shim_dir)`。
+  5. **GUI 的开关只 arm 不 apply**：`channel.set` 只改 `state.json`，写盘要顶栏「应用变更」；
+     用户点「启用」看到状态变了，却没有任何文件。另外详情里点单条通道只传了自己，
+     会把其他已武装通道一起关掉。
+  6. **GUI 子系统的 exe 再启动 console 子进程会另开一个窗口**：`metis` 是 GUI 子系统，
+     从终端启动时默认**不关联**父控制台；`claude` / `codex` 是 console 程序，Windows
+     会给它们新分配一个控制台窗口。必须在 CLI 模式先
+     `AttachConsole(ATTACH_PARENT_PROCESS)`（`apps/metis/src/win_console.rs`，全仓库
+     唯一的 unsafe 例外）。**注意**：AttachConsole 会把本进程的 std 句柄切到控制台，
+     导致 `metis status > file` / 管道捕获变空（实测）；必须先保存三个 std 句柄，
+     attach 后 `SetStdHandle` 还原。验证：传统控制台里 shim 进程的 `GetConsoleWindow()`
+     与子进程一致，同时重定向文件里仍能看到输出；ConPTY 下 HWND 都是 0。
+- **规则**：shim 模板带 `--exec`；`launch --exec` 走 `run_interactive` 并把宿主退出码回传；
+  **CLI 模式启动时先关联父控制台**；`apply` 发现 shim 目录不在 PATH 时把 `path_hint`
+  放进该条结果的 remediation（CLI 打印、GUI 详情显示）；
+  GUI 的开关/单通道按钮统一走 `MetisApp::set_channels`（打开即后台 apply，关闭走 `channel.set` 撤盘），
+  且单通道切换用 `HarnessRow::toggled_channels` 传全集。
+  端到端用**假 harness** 验证：参数透传、stdin 继承、退出码穿透 shim、没有递归、
+  子进程与父进程同一个控制台。
+  对应测试：`shim::tests::script_forwards_to_metis_and_passes_args`、
+  `which::tests::same_directory_is_recognised`、
+  `app::tests::enabling_a_channel_writes_it_immediately`、`model::tests::toggling_one_channel_keeps_the_others`。
+
+### G95. 自动写用户 PATH：`setx` 会截断，写回会丢变量类型
+- **现象**：用 `setx PATH "..."` 把 shim 目录加进 PATH，PATH 超过 1024 字符会被截断；
+  用普通的字符串写回，`%USERPROFILE%` 这类条目会被展开成固定路径，`REG_EXPAND_SZ`
+  变成 `REG_SZ`；新开的终端仍然看不到新值。
+- **原因**：`setx` 有 1024 字符上限；直接拼字符串写注册表会改变值类型；不广播
+  `WM_SETTINGCHANGE` 时资源管理器不会刷新环境块。
+- **规则**：`channel.shim-path` 用注册表 API：
+  - `GetValue('Path', ..., DoNotExpandEnvironmentNames)` 读原值；
+  - `GetValueKind` / `SetValue(..., kind)` 保留原类型（没有 Path 时用 `ExpandString`）；
+  - 把 shim 目录**移到最前面**（不是"存在就跳过"——它可能排在别的同名命令后面）；
+  - 写后广播 `WM_SETTINGCHANGE`（HWND_BROADCAST）；
+  - 幂等：已经在第一位就返回 `PRESENT`，不重写。
+  测试只允许 `dryRun`；真跑会改开发机的用户 PATH。
+  对应实现：`crates/engine/src/command.rs::shim_path_script`；
+  测试：`shim_path_script_preserves_registry_kind_and_broadcasts`、
+  `shim_path_script_escapes_single_quotes_in_the_directory`、
+  `ensure_shim_path_dry_run_returns_the_script_without_writing`。
+
 ### G86. `#[serde(flatten)]` 加上同名字段 → 重复 JSON 键，反序列化必坏
 - **现象**：`HubDetail` 里 `item: HubSummary` 有 `source`（条目来源），外层又有一个
   `source: DataSource`（网络/缓存）。序列化出两个 `"source"` 键，UI 用
@@ -1067,3 +1173,21 @@
 - **原因**：`flatten` 只摊平字段，不解决命名冲突；JSON 允许重复键，serde 的行为不可依赖。
 - **规则**：`flatten` 的外层字段**不能**和内层字段同名；用 `#[serde(rename = "dataSource")]`
   区分，并加一条 **round-trip** 测试（`page_and_detail_round_trip_through_json`）钉住。
+
+### G96. `ui.horizontal` 里的长文本不会折行，直接把列表行撑出卡片
+- **现象**：人设库「全部人设」列表里，人设介绍很长时文字一路向右超出卡片边界，
+  右边被窗口裁掉，看起来像布局坏了；行高、点击区域都还是正常的。
+- **原因**：`ui.horizontal(|ui| { ... ui.label(description) })` 的横向布局**不会换行**。
+  `Label` 在横向布局里按内容宽度铺开，可用宽度用完也不截断；卡片本身不裁剪，
+  于是文字画到了卡片外面。
+- **规则**：横向列表行里**不放不受限的长文本**。两种正确做法：
+  1. 摘要单独一行，用 `egui::Label::new(..).truncate()` 截断（宽度由外层 `Ui` 决定）；
+  2. 或者用 `horizontal_wrapped`，接受换行带来的行高变化。
+  完整内容放进详情浮层（`show_persona_detail`），列表只做摘要。
+  **浮层内部同样适用**：`Area` 里用 `ui.set_width(680)` 只是"期望宽度"，
+  如果正文区里放横向 `key_value`，长说明/长路径仍会把 `Area` 撑到上千像素
+  （用户报"详情弹框被撑得很大"）。做法是标签一行、值一行并 `Label::wrap()`（`detail_block`），
+  再用 `AreaState.size.x` 断言宽度上限（`a_long_description_does_not_widen_the_persona_overlay`）。
+  **验证要量图元的右边界**，不能只看"渲染出来了"（G38）：
+  `a_long_description_stays_inside_the_row_width` 用 400px 宽的 `Ui` 渲染一行 20 遍的
+  长说明，断言所有 shape 的 `visual_bounding_rect().max.x <= 404`。

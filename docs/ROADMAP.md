@@ -119,6 +119,7 @@ M0–M10 的闭环已落地；当前没有进行中的条目。每项"能用"的
 - [x] M6.10 无头界面测试：`egui_kittest` 渲染 + 交互 + 快照（依赖 M6.5）
 - [x] M6.11 无障碍：键盘可达（`Alt+1..4`/`Ctrl+R`/`Ctrl+Enter`/`Ctrl+K`/`Esc`）、焦点加宽可见、减少动效（系统环境变量 + 应用内开关）。**未做**：真正的 accesskit 语义标注（egui 的集成需额外 feature）
 - [x] M6.12 布局验证：真机在 `900×620`（最小窗）与 `900×1400`（窄高）下截图确认 —— 无横向溢出、标签不被截断、可滚动。**未做**：150%/200% DPI
+- [x] M6.13 本地人设详情与列表宽度：`persona.show` 命令（正文 + 元数据，缺失 id 退出 2）+ `metis show <id>`（人类可读 / `--json`）；GUI 列表每行「详情」（无障碍名带行标识）打开**固定宽度 680** 的独立浮层，正文按 Markdown 渲染、长说明/路径自动换行、`Esc`/背景关闭；列表说明改为单独一行并截断，不再撑出卡片。证据：`persona_show_*`（2）、CLI `show_*`（2）、`a_long_description_stays_inside_the_row_width`、`a_long_description_does_not_widen_the_persona_overlay`、`the_persona_detail_overlay_*`（2）、`the_persona_detail_renders_loading_and_error_states`、`an_empty_persona_body_is_explained_instead_of_blank`、app 详情加载/错误（2）；真机 agent-desktop 验证浮层宽度与换行
 
 ## M7 打包与发布 — owner: stabilize
 
@@ -158,7 +159,10 @@ M0–M10 的闭环已落地；当前没有进行中的条目。每项"能用"的
 - [x] M10.3 CLI：`metis hub list|show|import|skill`（依赖 M10.2）。34 条 CLI e2e（含 hub 帮助与坏输入不联网）；2026-11-09 真机 `list` / `show` / `import` / `skill remove` 通过
 - [x] M10.4 GUI：远端库卡片、分页（上一页 + 页码）、详情面板、skill 勾选、未校验二次确认（依赖 M10.1、M6.6）。人设库屏新增远端库卡片/内联详情；3 条无头渲染测试 + 快照基线重建；真实窗口 agent-desktop：加载 → 列表 → 详情通过
 - [x] M10.5 文档与真机验证：DATA-FORMAT、STATUS、PITFALLS、真实 worldd 调用记录（依赖 M10.4）。文档审计完成；STATUS 增加真机记录；PARITY §10 标注为 Metis 独有扩展；当前无未完成项
-- [x] M10.6 GUI 修正：详情改独立浮层；结果列表最大高度 480px + 列表内滚动；详情内容按 Markdown 渲染（依赖 M10.4）。无头浮层/列表高度测试；真实窗口 agent-desktop 验证浮层打开、Markdown 标题可见
+- [x] M10.6 GUI 修正：详情改独立浮层；结果列表最大高度 480px + 列表内滚动；详情内容按 Markdown 渲染（依赖 M10.4）。无头浮层/列表高度测试；真实窗口 agent-desktop 验证浮层打开、Markdown 标题可见。补：嵌套滚动区加 `min_scrolled_height`，列表与详情正文不再被父容器剩余空间压扁（回归测试 2 条；真机验证详情浮层正文完整、Markdown 标题可见）。
+- [x] M10.7 单可执行文件：`metis` 合并 CLI 与 GUI 壳；无参数在同一进程打开 GUI，有子命令走 CLI；Windows 链接为 GUI 子系统（双击无控制台，CLI 靠继承的 stdio 句柄）；`metis-gui` 改为库；打包/CI/脚本/文档只发一个 exe。证据：`launch_tests::*`（2 条）+ 34 条 CLI 管道 e2e；真机无参数开窗无控制台、`--version` / `status` 正常、管道 `$LASTEXITCODE` 正确；Windows zip 只有 `metis.exe`
+- [x] M10.8 接管命令（shim）链路修复：脚本转发带 `--exec`；`launch --exec` 继承终端（`run_interactive`）并回传宿主退出码；CLI 模式 `AttachConsole(ATTACH_PARENT_PROCESS)` 让宿主在当前控制台运行（不另开窗口）；解析宿主时跳过 shim 目录避免递归；`apply`/GUI 提示 shim 目录必须在 PATH 最前面；GUI 通道开关**打开即落盘**，单通道切换不再误伤其他通道。证据：shim/which/app/model 单测 + 端到端假 harness（参数透传、stdin 继承、退出码 7 穿透、无递归、父子同一控制台句柄）
+- [x] M10.9 GUI 启动自动配置 shim PATH：已武装 shim 且目录不在 PATH 时，调用 `channel.shim-path` 写**用户级** PATH（保留原值类型、广播 WM_SETTINGCHANGE、幂等、把目录移到最前）；只写 HKCU、不写系统级。证据：脚本生成/转义/dryRun 单测；dryRun 不触注册表
 
 ---
 

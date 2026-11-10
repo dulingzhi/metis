@@ -284,9 +284,11 @@ fn harness_detail(app: &mut MetisApp, ctx: &egui::Context) {
                             );
                             if widgets::secondary(&mut btn_ui, if armed { "关闭" } else { "启用" }).clicked() {
                                 let id = row.id.clone();
-                                let channels: Vec<&str> = if armed { Vec::new() } else { vec![channel.as_str()] };
-                                app.invoke("channel.set", json!({ "harness": id, "channels": channels }));
-                                app.refresh_blocking();
+                                // `channel.set` 接收的是**全集**：只传被点的这一条会把
+                                // 其他已武装通道一起关掉。
+                                let next = row.toggled_channels(channel);
+                                // 启用后立刻落盘（关闭已经在 channel.set 里撤过盘）。
+                                app.set_channels(&id, &next, !armed);
                             }
                         } else {
                             ui.painter().text(
@@ -297,6 +299,26 @@ fn harness_detail(app: &mut MetisApp, ctx: &egui::Context) {
                                 t.text_faint,
                             );
                         }
+                    }
+
+                    // 接管命令 = shim 包装脚本。脚本写了不等于生效：它所在的目录必须
+                    // 在 PATH 最前面，否则系统仍会先找到原来的 `claude`（用户报过
+                    // "激活后接管命令没生效"）。这里把前提说清楚。
+                    if row.is_armed(Channel::Shim) && !app.snapshot.shim_on_path {
+                        ui.add_space(space::S);
+                        let hint = if app.shim_path_attempted {
+                            // 启动时已经自动写过用户 PATH；当前进程看到的 PATH 不会变。
+                            if app.snapshot.shim_dir.is_empty() {
+                                "已自动把 shim 目录加入用户 PATH；重开终端后生效。".to_owned()
+                            } else {
+                                format!("已自动把 {} 加入用户 PATH；重开终端后生效。", app.snapshot.shim_dir)
+                            }
+                        } else if app.snapshot.shim_dir.is_empty() {
+                            "命令接管尚未生效：把 ~/.metis/shim 加到 PATH 最前面，重开终端后确认裸命令指向它。".to_owned()
+                        } else {
+                            format!("命令接管尚未生效：把 {} 加到 PATH 最前面，重开终端后确认裸命令指向它。", app.snapshot.shim_dir)
+                        };
+                        ui.label(RichText::new(hint).size(font::CAPTION).color(t.warning));
                     }
                 });
         });
@@ -475,9 +497,11 @@ fn harness_tile(app: &mut MetisApp, ui: &mut Ui, t: &Tokens, row: &model::Harnes
             }
             if toggle.changed() && (installed || !want) {
                 let id = row.id.clone();
-                let channels: Vec<&str> = if want { vec!["shim", "slash", "install"] } else { Vec::new() };
-                app.invoke("channel.set", json!({ "harness": id, "channels": channels }));
-                app.refresh_blocking();
+                // 只武装这家真正可用的通道（claude 的 slash/install 不可用，
+                // 无条件塞三条会让每次 apply 都多两条失败）。
+                let armed_channels = if want { row.auto_channels() } else { Vec::new() };
+                // 打开开关就落盘：用户点「启用」期待文件马上出现。
+                app.set_channels(&id, &armed_channels, want);
             }
         });
     });
@@ -624,6 +648,45 @@ fn tile_status(row: &model::HarnessRow, on: bool, installed: bool) -> &'static s
 fn short(value: &Option<String>) -> String {
     value.clone().unwrap_or_else(|| "全局".to_owned())
 }
+/// 人设列表的一行。返回 `true` 表示点了「详情」。
+///
+/// **说明必须单独一行并截断**：`ui.horizontal` 里的 `Label` 不会按剩余宽度换行，
+/// 长说明会把整行撑出卡片右边界（真机截图里文字直接超出窗口）。列表只展示
+/// 摘要，完整正文在详情浮层里。
+fn persona_row(ui: &mut Ui, persona: &model::PersonaRow, is_current: bool) -> bool {
+    let t = Tokens::get(ui.ctx());
+    let mut open = false;
+
+    ui.horizontal(|ui| {
+        let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
+        icons::paint(ui, rect, "file-code", 16.0, if is_current { t.accent_ink } else { t.icon });
+        ui.label(RichText::new(&persona.name).size(font::BODY).family(fonts::medium()).color(t.text));
+        if is_current {
+            widgets::pill(ui, "当前", t.on_accent, t.accent);
+        }
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            let link = widgets::link(ui, "详情");
+            // 每行都有一个「详情」：无障碍名字必须带行标识，否则读屏用户听到的是
+            // 一长串一样的「详情」，`agent-desktop` 也会报 `AMBIGUOUS_TARGET`（G85）。
+            link.ctx.accesskit_node_builder(link.id, |node| {
+                node.set_role(egui::accesskit::Role::Button);
+                node.set_label(format!("详情：{}", persona.name));
+                node.set_description("查看这份人设的正文与元数据");
+                node.add_action(egui::accesskit::Action::Click);
+            });
+            if link.clicked() {
+                open = true;
+            }
+        });
+    });
+
+    if let Some(description) = persona.description.as_deref().filter(|d| !d.is_empty()) {
+        // `truncate()` 是宽度上限的保证：单行标签默认会一直向右延伸。
+        ui.add(egui::Label::new(RichText::new(description).size(font::CAPTION).color(t.text_faint)).truncate());
+    }
+    open
+}
+
 /// 人设库。
 pub fn library(app: &mut MetisApp, ui: &mut Ui) {
     let t = Tokens::get(ui.ctx());
@@ -656,6 +719,7 @@ pub fn library(app: &mut MetisApp, ui: &mut Ui) {
                 .personas
                 .iter()
                 .filter(|p| query.is_empty() || p.name.to_lowercase().contains(&query) || p.id.to_lowercase().contains(&query))
+                .cloned()
                 .collect();
 
             if personas.is_empty() {
@@ -668,19 +732,12 @@ pub fn library(app: &mut MetisApp, ui: &mut Ui) {
                 return;
             }
 
-            for persona in personas {
+            for persona in &personas {
                 let is_current = app.snapshot.saved_persona.as_deref() == Some(persona.id.as_str());
-                ui.horizontal(|ui| {
-                    let (rect, _) = ui.allocate_exact_size(egui::vec2(16.0, 16.0), egui::Sense::hover());
-                    icons::paint(ui, rect, "file-code", 16.0, if is_current { t.accent_ink } else { t.icon });
-                    ui.label(RichText::new(&persona.name).size(font::BODY).family(fonts::medium()).color(t.text));
-                    if is_current {
-                        widgets::pill(ui, "当前", t.on_accent, t.accent);
-                    }
-                    if let Some(description) = persona.description.as_deref().filter(|d| !d.is_empty()) {
-                        ui.label(RichText::new(description).size(font::CAPTION).color(t.text_faint));
-                    }
-                });
+                if persona_row(ui, persona, is_current) {
+                    // 正文可能上万字：列表不带，点开时后台单独读。
+                    app.spawn_persona_detail(persona.id.clone());
+                }
                 ui.add_space(space::XS);
                 widgets::separator(ui);
             }
@@ -758,8 +815,18 @@ fn import_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     });
 }
 
-/// 搜索结果列表的最大高度；超过就在列表内滚动，不把整页撑长。
+/// 搜索结果列表的高度；超过就在列表内滚动，不把整页撑长。
+///
+/// 同时用作**最小值**（`min_scrolled_height`）：人设库整页是外层 `ScrollArea`，
+/// 里层列表的可用高度会被"页面剩余可视空间"截断 —— 只设 `max_height` 时，
+/// 用户把页面往下滚、列表就只剩一条缝（实测 ~130px，用户报过"列表太低"）。
 const HUB_LIST_MAX_HEIGHT: f32 = 480.0;
+
+/// 结果列表的滚动区。`max_height` 与 `min_scrolled_height` 都设成同一个值：
+/// 内容短时收缩到内容高度，内容长时固定占满 [`HUB_LIST_MAX_HEIGHT`]。
+fn hub_list_scroll() -> egui::ScrollArea {
+    egui::ScrollArea::vertical().max_height(HUB_LIST_MAX_HEIGHT).min_scrolled_height(HUB_LIST_MAX_HEIGHT).auto_shrink([false, true])
+}
 
 /// 远端人设库（worldd / KK Hub）。
 ///
@@ -849,7 +916,7 @@ fn hub_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
             let mut open: Option<String> = None;
             // 结果列表有自己的滚动区：20 条结果不能把整页撑长。
             // 分页控件留在滚动区外，始终可见。
-            egui::ScrollArea::vertical().max_height(HUB_LIST_MAX_HEIGHT).auto_shrink([false, true]).show(ui, |ui| {
+            hub_list_scroll().show(ui, |ui| {
                 for item in &app.hub.items {
                     let selected = app.hub.selected.as_deref() == Some(item.slug.as_str());
                     ui.horizontal(|ui| {
@@ -976,8 +1043,13 @@ pub fn show_hub_detail(app: &mut MetisApp, ctx: &egui::Context) {
                     ui.add_space(space::S);
 
                     // 内容自己的滚动区：标题/按钮固定，长提示词不会把浮层顶出屏幕。
+                    //
+                    // **`min_scrolled_height` 不可省**：`Area` 的可用高度取自上一帧的
+                    // 尺寸，而这里的 `ScrollArea` 又拿可用高度当上限 —— 只设 `max_height`
+                    // 时两者会互相压缩，浮层锁死在一百多像素，正文被整个裁掉
+                    // （用户报过"详情缺少内容"，实测浮层只有 ~134px）。
                     let max_body = (screen.height() - 220.0).clamp(180.0, 620.0);
-                    egui::ScrollArea::vertical().max_height(max_body).auto_shrink([false, true]).show(ui, |ui| {
+                    egui::ScrollArea::vertical().max_height(max_body).min_scrolled_height(max_body).auto_shrink([false, true]).show(ui, |ui| {
                         hub_detail_content(app, ui, &t);
                     });
                 });
@@ -1106,6 +1178,125 @@ fn hub_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     }
     if preview {
         app.spawn_hub_import(true);
+    }
+}
+
+/// 本地人设详情 —— 独立浮层（与执行器/远端详情同一套 `Area + Foreground`）。
+///
+/// 为什么不做成列表里的内联展开：正文是完整 Markdown，内联会把整页顶长；
+/// 而且列表行本身要保持在卡片宽度内（这正是用户报的"介绍把行撑超框"）。
+pub fn show_persona_detail(app: &mut MetisApp, ctx: &egui::Context) {
+    if app.persona_detail.selected.is_none() {
+        return;
+    }
+    let t = Tokens::get(ctx);
+    let screen = ctx.content_rect();
+    let width = 680.0_f32.min(screen.width() - 48.0);
+    let mut close = false;
+
+    egui::Area::new(egui::Id::new("persona-detail"))
+        .fixed_pos(egui::pos2(screen.center().x - width / 2.0, screen.top() + 32.0))
+        .order(egui::Order::Foreground)
+        .show(ctx, |ui| {
+            ui.painter().rect_filled(screen, 0.0, egui::Color32::from_black_alpha(90));
+            let backdrop = ui.interact(screen, ui.id().with("persona-backdrop"), egui::Sense::click());
+            if backdrop.clicked() {
+                close = true;
+            }
+
+            egui::Frame::new()
+                .fill(t.card)
+                .stroke(egui::Stroke::new(1.0, t.card_border))
+                .corner_radius(egui::CornerRadius::same(t.radius_lg as u8))
+                .shadow(egui::epaint::Shadow { offset: [0, 8], blur: 24, spread: 0, color: t.shadow })
+                .inner_margin(egui::Margin::same(space::L as i8))
+                .show(ui, |ui| {
+                    ui.set_width(width - 2.0 * space::L);
+                    ui.horizontal(|ui| {
+                        let title = app
+                            .persona_detail
+                            .detail
+                            .as_ref()
+                            .map(|detail| detail.name.clone())
+                            .or_else(|| app.persona_detail.selected.clone())
+                            .unwrap_or_else(|| "人设详情".to_owned());
+                        widgets::section_title(ui, &title);
+                        if let Some(detail) = &app.persona_detail.detail {
+                            if detail.active {
+                                widgets::pill(ui, "当前", t.on_accent, t.accent);
+                            }
+                            ui.label(RichText::new(format!("{} 字", detail.chars)).size(font::SMALL).color(t.text_faint));
+                        }
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            let text = egui::RichText::new("关闭").size(font::CAPTION).color(t.accent_ink);
+                            if ui.add(egui::Button::new(text).frame(false)).clicked() {
+                                close = true;
+                            }
+                        });
+                    });
+                    ui.add_space(space::S);
+
+                    // 与远端详情相同的约束：`min_scrolled_height` 不能省，
+                    // 否则 `Area` 上一帧的尺寸会反向压缩正文（G89）。
+                    let max_body = (screen.height() - 220.0).clamp(180.0, 620.0);
+                    egui::ScrollArea::vertical().max_height(max_body).min_scrolled_height(max_body).auto_shrink([false, true]).show(ui, |ui| {
+                        persona_detail_content(app, ui, &t);
+                    });
+                });
+        });
+
+    if close {
+        app.close_persona_detail();
+    }
+}
+
+/// 详情里的"标签 + 值"块：值太长时在可用宽度内换行。
+///
+/// 不用 `widgets::key_value`：那是 `ui.horizontal`，横向布局里的 `Label` 不换行，
+/// 长说明/长路径会把整个浮层撑出屏幕（G96）。
+fn detail_block(ui: &mut Ui, t: &Tokens, key: &str, value: &str) {
+    ui.label(RichText::new(key).size(font::CAPTION).color(t.text_faint));
+    ui.add(egui::Label::new(RichText::new(value).size(font::SMALL).color(t.text)).wrap());
+    ui.add_space(space::XS);
+}
+
+/// 浮层内部的内容（已被标题栏与滚动区包住）。
+fn persona_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
+    if app.persona_detail.loading {
+        widgets::working(ui, "正在读取人设…", None);
+        return;
+    }
+    if let Some(error) = app.persona_detail.error.as_deref() {
+        ui.label(RichText::new(error).size(font::SMALL).color(t.danger));
+        return;
+    }
+    let Some(detail) = app.persona_detail.detail.clone() else { return };
+
+    widgets::key_value(ui, "id", &detail.id);
+    if let Some(description) = detail.description.as_deref().filter(|description| !description.trim().is_empty()) {
+        detail_block(ui, t, "说明", description);
+    }
+    widgets::key_value(ui, "字数", &format!("{} 字", detail.chars));
+    detail_block(ui, t, "文件", &detail.path);
+    if !detail.harness.is_empty() {
+        detail_block(ui, t, "适用执行器", &detail.harness.join("、"));
+    }
+    if !detail.model.is_empty() {
+        detail_block(ui, t, "适用模型", &detail.model.join("、"));
+    }
+    for warning in &detail.warnings {
+        ui.label(RichText::new(warning).size(font::CAPTION).color(t.warning));
+    }
+
+    ui.add_space(space::S);
+    widgets::section_title(ui, "正文");
+    // 正文是 Markdown；存储层原样保存，渲染只发生在这里（G88）。
+    ui.style_mut().visuals.hyperlink_color = t.accent_ink;
+    let body = detail.body.trim();
+    if body.is_empty() {
+        ui.label(RichText::new("（正文为空）").size(font::SMALL).color(t.text_faint));
+    } else {
+        egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, body);
     }
 }
 
@@ -1369,6 +1560,146 @@ mod tests {
     }
 
     #[test]
+    fn a_long_description_stays_inside_the_row_width() {
+        // 用户报：人设介绍把列表行撑出卡片右侧（截图里文字直接超出窗口）。
+        // 列表只展示摘要，超长必须截断；这里用"图元最右边界"做可量化断言（G38）。
+        let row = crate::model::PersonaRow {
+            id: "long".to_owned(),
+            name: "长说明".to_owned(),
+            description: Some("这是一段很长很长的人设介绍。".repeat(20)),
+            chars: 10,
+            active: false,
+        };
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(420.0, 300.0));
+        let mut max_x = 0.0_f32;
+        for _ in 0..2 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                ui.set_width(400.0);
+                let _ = persona_row(ui, &row, false);
+            });
+            output.textures_delta.clear();
+            for clipped in &output.shapes {
+                max_x = max_x.max(clipped.shape.visual_bounding_rect().max.x);
+            }
+        }
+        assert!(max_x <= 404.0, "行内容画到了 {max_x}px，超出 400px 的行宽（说明文字没有被截断）");
+    }
+
+    #[test]
+    fn the_persona_detail_renders_loading_and_error_states() {
+        let (_dir, mut app) = app();
+        app.persona_detail.selected = Some("concise".to_owned());
+        app.persona_detail.loading = true;
+        assert!(render_persona_overlay(&mut app) > 5, "加载态应该画出标题与提示");
+
+        app.persona_detail.loading = false;
+        app.persona_detail.error = Some("人设不存在：ghost（用 `metis ls` 查看可用的人设 id）".to_owned());
+        assert!(render_persona_overlay(&mut app) > 5, "错误态应该画出错误文案");
+    }
+
+    #[test]
+    fn an_empty_persona_body_is_explained_instead_of_blank() {
+        let (_dir, mut app) = app();
+        app.persona_detail.selected = Some("concise".to_owned());
+        let mut detail = persona_detail();
+        detail.body = "   ".to_owned();
+        app.persona_detail.detail = Some(detail);
+        assert!(render_persona_overlay(&mut app) > 20, "空正文也要有可读的占位说明");
+    }
+
+    fn persona_detail() -> crate::state::PersonaDetail {
+        crate::state::PersonaDetail {
+            id: "concise".to_owned(),
+            name: "简洁协作".to_owned(),
+            description: Some("先结论".to_owned()),
+            chars: 42,
+            active: true,
+            path: "C:/Users/example/.metis/personas/concise.md".to_owned(),
+            body: "# 标题\n\n**加粗**\n\n- 一\n- 二".to_owned(),
+            harness: vec!["codex".to_owned()],
+            model: Vec::new(),
+            warnings: Vec::new(),
+        }
+    }
+
+    /// 渲染人设详情浮层；`Area` 需要 2~3 帧才能定几何（G75）。
+    fn render_persona_overlay(app: &mut MetisApp) -> usize {
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+        let mut shapes = 0;
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+                show_persona_detail(app, ui.ctx());
+            });
+            output.textures_delta.clear();
+            shapes = shapes.max(output.shapes.len());
+        }
+        shapes
+    }
+
+    #[test]
+    fn the_persona_detail_overlay_paints_only_when_selected() {
+        let (_dir, mut app) = app();
+        assert_eq!(render_persona_overlay(&mut app), 0, "没选中时不该画浮层");
+
+        app.persona_detail.selected = Some("concise".to_owned());
+        app.persona_detail.detail = Some(persona_detail());
+        let count = render_persona_overlay(&mut app);
+        assert!(count > 20, "人设详情浮层只画了 {count} 个图元");
+    }
+
+    #[test]
+    fn the_persona_detail_overlay_keeps_its_body_height() {
+        // 与远端详情同一条回归（G89）：`min_scrolled_height` 不能省，否则
+        // `Area` 的上一帧尺寸会把正文滚动区压成一条缝。
+        let (_dir, mut app) = app();
+        app.persona_detail.selected = Some("concise".to_owned());
+        // 真实人设正文通常很长；短正文时 `auto_shrink` 让浮层收紧是正常的，
+        // 这里要验的是"长正文能把滚动区撑到上限"，所以给足内容。
+        let mut detail = persona_detail();
+        detail.body = (0..80).map(|index| format!("## 小节 {index}\n\n这一段正文用于测试高度。\n")).collect::<String>();
+        app.persona_detail.detail = Some(detail);
+
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| show_persona_detail(&mut app, ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let state = egui::AreaState::load(&ctx, egui::Id::new("persona-detail")).expect("浮层应已登记几何");
+        let height = state.size.map_or(0.0, |size| size.y);
+        assert!(height > 500.0, "人设详情浮层只有 {height}px 高，正文仍被压扁");
+    }
+
+    #[test]
+    fn a_long_description_does_not_widen_the_persona_overlay() {
+        // 与列表行同一个根因（G96）：浮层里的"说明/文件"如果做成横向行，
+        // 长文本会把整个浮层撑出屏幕。这里断言浮层宽度固定在上限内。
+        let (_dir, mut app) = app();
+        app.persona_detail.selected = Some("concise".to_owned());
+        let mut detail = persona_detail();
+        detail.description = Some("这是一段很长很长的人设说明。".repeat(12));
+        detail.path = "C:/Users/example/.metis/personas/concise.md".to_owned();
+        app.persona_detail.detail = Some(detail);
+
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| show_persona_detail(&mut app, ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let state = egui::AreaState::load(&ctx, egui::Id::new("persona-detail")).expect("浮层应已登记几何");
+        let width = state.size.map_or(0.0, |size| size.x);
+        // 设计上限 680；给阴影/边框留一点余量。
+        assert!(width > 0.0 && width <= 690.0, "浮层被长说明撑到了 {width}px（上限 680）");
+    }
+
+    #[test]
     fn the_hub_card_renders_list_items_and_pagination() {
         let (_dir, mut app) = app();
         let empty = render(crate::state::Screen::Library, &mut app);
@@ -1400,6 +1731,54 @@ mod tests {
         app.hub.detail = Some(hub_detail("a", false, &[]));
         assert!(!app.hub.can_import(), "未校验时导入按钮必须是禁用的");
         assert!(render_hub_overlay(&mut app) > 20);
+    }
+
+    #[test]
+    fn the_hub_detail_overlay_keeps_its_body_height() {
+        // 回归（用户报"详情缺少内容"）：`Area` 的可用高度来自上一帧尺寸，正文
+        // `ScrollArea` 若只设 `max_height`，两者互相压缩，浮层会锁死在 ~134px，
+        // 作者/来源/提示词全被裁掉。这里断言最终高度足够放下正文首屏。
+        let (_dir, mut app) = app();
+        app.hub.selected = Some("a".to_owned());
+        app.hub.detail = Some(hub_detail("a", true, &["skill-a"]));
+
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+        for _ in 0..3 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| show_hub_detail(&mut app, ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let state = egui::AreaState::load(&ctx, egui::Id::new("hub-detail")).expect("浮层应已登记几何");
+        let height = state.size.map_or(0.0, |size| size.y);
+        assert!(height > 500.0, "详情浮层只有 {height}px 高，正文仍被压扁");
+    }
+
+    #[test]
+    fn the_hub_list_keeps_its_height_inside_the_page_scroll() {
+        // 回归（用户报"列表太低"）：人设库整页是外层 `ScrollArea`，里层列表的
+        // 可用高度会被"页面剩余空间"截断。只设 `max_height` 时，滚到页面下方
+        // 列表只剩一条缝；`min_scrolled_height` 保证它至少占满 480px。
+        let ctx = egui::Context::default();
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1100.0, 900.0));
+        let mut viewport = 0.0_f32;
+        let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| {
+            egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
+                // 先吃掉大部分视口，模拟"页面已经滚到下方、列表只剩一点空间"。
+                ui.add_space(700.0);
+                viewport = hub_list_scroll()
+                    .show(ui, |ui| {
+                        for i in 0..20 {
+                            ui.label(format!("条目 {i}"));
+                            ui.separator();
+                        }
+                    })
+                    .inner_rect
+                    .height();
+            });
+        });
+        output.textures_delta.clear();
+        assert!(viewport >= HUB_LIST_MAX_HEIGHT - 1.0, "列表视口只有 {viewport}px，仍被页面压缩");
     }
 
     #[test]

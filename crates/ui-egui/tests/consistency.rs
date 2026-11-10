@@ -31,6 +31,7 @@ const CLI_COMMAND_IDS: &[&str] = &[
     "state.power",
     "state.mode",
     "persona.list",
+    "persona.show",
     "persona.save",
     "persona.use",
     "persona.remove",

@@ -63,7 +63,8 @@ walkdir = "2"
 regex = "1"
 
 [workspace.lints.rust]
-unsafe_code = "forbid"
+# 唯一例外见 AGENTS.md 铁律 9：`apps/metis/src/win_console.rs` 的 AttachConsole。
+unsafe_code = "deny"
 missing_debug_implementations = "warn"
 
 [workspace.lints.clippy]

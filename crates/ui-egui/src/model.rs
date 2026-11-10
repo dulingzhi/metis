@@ -46,6 +46,27 @@ impl HarnessRow {
         self.armed.contains(&channel)
     }
 
+    /// 卡片总开关打开时要武装的通道：只包含这家**真正可用**的 shim/slash/install。
+    ///
+    /// 旧实现无条件塞三条：claude 的 slash/install 本来就不支持，武装后每次
+    /// `apply` 都会报两条失败（用户看到的"激活后没用"）。
+    pub fn auto_channels(&self) -> Vec<Channel> {
+        [Channel::Shim, Channel::Slash, Channel::Install].into_iter().filter(|channel| self.channel(*channel).0).collect()
+    }
+
+    /// 在一行里单独切换一条通道后的**完整**武装集合。
+    ///
+    /// `channel.set` 接收的是全集；只把被点的通道传过去会把其他通道一起关掉。
+    pub fn toggled_channels(&self, channel: Channel) -> Vec<Channel> {
+        let mut next = self.armed.clone();
+        if let Some(index) = next.iter().position(|armed| *armed == channel) {
+            next.remove(index);
+        } else {
+            next.push(channel);
+        }
+        next
+    }
+
     /// 一行的人话状态。
     pub fn status_line(&self) -> String {
         if !self.injectable {
@@ -287,6 +308,40 @@ mod tests {
         let (ok, why) = row.channel(Channel::Install);
         assert!(!ok);
         assert!(why.unwrap_or_default().contains("压不住"));
+    }
+
+    #[test]
+    fn auto_channels_only_arms_what_the_harness_supports() {
+        // 回归：claude 的 slash / install 不可用，总开关不该把它们一起武装，
+        // 否则每次 apply 都会多两条失败。
+        let claude = row("claude");
+        let auto = claude.auto_channels();
+        assert!(auto.contains(&Channel::Shim), "shim 应该被武装");
+        assert!(!auto.contains(&Channel::Install), "install 不可用，不该武装");
+        assert!(!auto.contains(&Channel::Slash), "slash 不可用，不该武装");
+
+        // codex 有 shim / install，没有 slash：只武装可用的两条。
+        let codex = row("codex");
+        let auto = codex.auto_channels();
+        assert!(auto.contains(&Channel::Shim), "codex 的 shim 可用");
+        assert!(auto.contains(&Channel::Install), "codex 的 install 可用");
+        assert!(!auto.contains(&Channel::Slash), "codex 没有会话内通道，不该武装");
+    }
+
+    #[test]
+    fn toggling_one_channel_keeps_the_others() {
+        // 回归：详情里点单条「启用」不能把其他已武装通道一起关掉。
+        let mut row = row("claude");
+        row.armed = vec![Channel::Shim];
+        let next = row.toggled_channels(Channel::Project);
+        assert!(next.contains(&Channel::Shim), "其他通道必须保留");
+        assert!(next.contains(&Channel::Project));
+        let back = {
+            let mut row = row.clone();
+            row.armed = next;
+            row.toggled_channels(Channel::Project)
+        };
+        assert_eq!(back, vec![Channel::Shim], "再点一次只关掉这一条");
     }
 
     #[test]

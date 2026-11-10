@@ -130,12 +130,18 @@ impl Command for Launch {
             return Err(MetisError::new(ErrorKind::UnsupportedChannel, format!("{harness} 没有命令行入口"))
                 .with_remediation("用 metis arm <h> --channel install 装常驻通道，然后重开那个客户端"));
         }
-        let outcome = metis_process::Exec::new(plan.program.clone()).args(plan.args.clone()).run()?;
+        // **必须跳过 shim 目录**：shim 调用的就是 `metis launch <h> --exec`，
+        // 不跳过会再次执行 shim，形成无限递归。
+        let program = metis_process::find_program_excluding(&plan.program, &engine.paths().shim_dir()).ok_or_else(|| {
+            MetisError::new(ErrorKind::ProgramMissing, format!("找不到可执行文件：{}", plan.program))
+                .with_remediation("确认它已安装并且在 PATH 里；或者从这条通道里撤掉")
+                .with_detail(plan.preview())
+        })?;
+        // 交互式会话：继承终端（铁律 11 的唯一例外，见 metis-process::run_interactive）。
+        let code = metis_process::run_interactive(&program, &plan.args)?;
         let mut value = summary;
         value["executed"] = serde_json::json!(true);
-        value["exitCode"] = serde_json::json!(outcome.status);
-        value["stdout"] = serde_json::json!(outcome.stdout);
-        value["stderr"] = serde_json::json!(outcome.stderr);
+        value["exitCode"] = serde_json::json!(code);
         Ok(CommandOutput::Json(value))
     }
 }
@@ -191,7 +197,12 @@ impl Command for Ask {
         if !exec {
             return Ok(CommandOutput::Json(summary));
         }
-        let outcome = metis_process::Exec::new(plan.program.clone()).args(plan.args.clone()).run()?;
+        // 一次性问答不是交互式会话：走 Exec（捕获输出、关闭 stdin）。
+        // 同样跳过 shim 目录，避免 `metis ask` 触发自己。
+        let program = metis_process::find_program_excluding(&plan.program, &engine.paths().shim_dir())
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| plan.program.clone());
+        let outcome = metis_process::Exec::new(program).args(plan.args.clone()).run()?;
         summary["executed"] = serde_json::json!(true);
         summary["exitCode"] = serde_json::json!(outcome.status);
         summary["stdout"] = serde_json::json!(outcome.stdout);

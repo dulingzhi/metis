@@ -2159,6 +2159,7 @@ dependencies = [
  "metis-core",
  "metis-engine",
  "metis-fs",
+ "metis-gui",
  "metis-harness",
  "metis-paths",
  "metis-persona",
@@ -2245,7 +2246,6 @@ dependencies = [
  "metis-paths",
  "metis-ui-egui",
  "tempfile",
- "winresource",
 ]
 
 [[package]]

@@ -4,7 +4,7 @@
 > 每条"能做什么"必须能指出**代码位置**与**测试名**；指不出来就写"未实现"。
 > 不允许把计划写成已完成。
 
-最后更新：M0–M10 全部收尾；远端 Hub 的客户端、导入、技能、CLI 与 GUI 均有代码与测试，2026-11-09 真机验证通过。
+最后更新：M0–M10 全部收尾；远端 Hub 的客户端、导入、技能、CLI 与 GUI 均有代码与测试，2026-11-10 真机验证通过（含 M10.6 浮层/列表高度修正）。本地人设详情（`persona.show` / `metis show` / GUI 浮层）与列表说明截断已补齐。
 
 ## 一句话
 
@@ -24,7 +24,7 @@
 | 文件交换 journal + 崩溃回收（外部修改拒绝覆盖） | `crates/fs/src/swap.rs` | `swap::tests::*`（12 个） |
 | 托管块（Markdown/TOML 标记、块外一字节不改、CRLF 保持） | `crates/channel/src/blocks.rs` | `blocks::tests::*`（14 个） |
 | `install` 通道（托管块 + JSON 字段 + 整文件备份回滚） | `crates/channel/src/install.rs` | `apply_then_revert_restores_bytes_exactly`、`json_field_round_trips` |
-| `shim` 通道（包装脚本，不内嵌人设） | `crates/channel/src/shim.rs` | `script_never_embeds_the_persona_body` 等 |
+| `shim` 通道（包装脚本，不内嵌人设，`launch --exec` 交互式启动；GUI 开关打开即落盘；启动自动配置用户 PATH） | `crates/channel/src/shim.rs`、`crates/process/src/interactive.rs`、`crates/process/src/which.rs`、`crates/ui-egui/src/app.rs`、`crates/engine/src/command.rs`、`apps/metis/src/win_console.rs` | `script_forwards_to_metis_and_passes_args`（含 `--exec`）、`script_never_embeds_the_persona_body`、`same_directory_is_recognised`、`enabling_a_channel_writes_it_immediately`、`toggling_one_channel_keeps_the_others`、`shim_path_script_preserves_registry_kind_and_broadcasts`、`ensure_shim_path_dry_run_returns_the_script_without_writing`；端到端假 harness：参数透传、stdin 继承、退出码穿透 shim、无递归、**子进程与父进程同一控制台**（传统控制台 HWND 相同，ConPTY 下均为 0）。`channel.shim-path` 只写用户级 PATH（HKCU），保留值类型并广播；`apply`/GUI 在目录不在 PATH 时提示 |
 | `project` 通道（绝对路径登记、逐字节还原） | `crates/channel/src/project.rs` | `apply_then_revert_restores_bytes` 等 |
 | **`slash` 通道**（6 家的宿主 JS 产物 + 运行时 + 幂等 + 可撤销） | `crates/channel/src/slash.rs` + `assets/host/*.mjs` | **`runtime_behaviour_tests_pass`**（34 条 JS 行为断言，跑真实产物）、`rendered_output_is_syntactically_valid_javascript`（node --check）、`install_is_idempotent`、`install_then_revert_cleans_up` |
 | **DSH 的 `cordis.patch.yml` 挂载**（否则宿主不加载插件） | `crates/channel/src/dsh_patch.rs` | `mounted_patch_is_valid_yaml_with_an_insert_entry`（node 校验结构）、`mount_then_unmount_round_trips_on_disk`（逐字节还原）、engine 层 `dsh_install_mounts_the_cordis_patch_block` |
@@ -41,6 +41,7 @@
 | **侧栏（P2）** | `crates/ui-egui/src/sidebar.rs` | 6 条：图标映射、窄窗自动折叠、手动折叠优先、两态渲染、四屏选中态。**真机验证** 1300px 展开 / 820px 自动折叠 |
 | **备份体积管理**（先算再删，被引用的一律保留） | `crates/engine/src/backups.rs`、`commands_backups.rs` | `backups::tests::*`（10 条）、`commands_backups::tests::*`（5 条）。关键：`prune_removes_only_orphans`、`everything_referenced_means_nothing_is_prunable`、CLI 默认预览 |
 | **发布（v0.1.0）** | `.github/workflows/release.yml`、`scripts/package.ps1`、`scripts/gen-icon.py` | tag 触发；校验 tag ≡ Cargo.toml ≡ 二进制版本；三平台产物 + SHA256。**实测**：下载 → 校验和匹配 → 解压 → `metis 0.1.0` 可运行 |
+| **单可执行文件（CLI + GUI）** | `apps/metis/src/main.rs`、`apps/metis-gui/src/lib.rs` | `launch_tests` 2 条（无参数→GUI、有参数→CLI）。Windows 链接为 **GUI 子系统**：双击无控制台；CLI 靠继承的 stdio 句柄（cmd / PowerShell 管道 / CI 正常，`$LASTEXITCODE` 实测正确；PowerShell `>` 重定向不等 GUI，见 PITFALLS G92）。**真机**：无参数启动 GUI、`--version` / `status` 正常；包内只有一个 exe |
 | **执行器卡片（自适应网格）** | `crates/ui-egui/src/screens/mod.rs` | 6 条：`grid_columns` 三档宽度、卡片固定高度、首屏预算、浮层选中才画/未知 id 不画/不改变页图元数。**真机验证**：4 列流式换行、下拉不超框、详情浮层对齐 |
 | **GUI GitHub 导入** | `crates/ui-egui/src/{actions,app,screens}.rs` | 5 条：默认源、空地址拦截、命令映射、后台任务、标签。**真机验证**：点「导入」→ 5 份人设出现在列表，显示「导入完成」 |
 | **GitHub 人设源** | `crates/engine/src/tarball.rs`、`persona_import.rs` | 20 条：tarball 解包（前缀剥离/文档跳过/非 UTF-8/坏包/目录）、单请求验证、无索引兼容、404/网络/坏 JSON。**真机验证**：从 `dulingzhi/metis-personas` 导入 5 份，1.3s |
@@ -48,7 +49,8 @@
 | **Hub 导入（expert → 人设 + 关联技能）** | `crates/engine/src/hub_import.rs`、`commands_hub.rs` | `hub_import::tests::*`（9 条 + 1 条真机 `#[ignore]`：导入、dry-run、identical、覆盖、未校验拒绝、关闭 knowledge、`--as`、技能上限与筛选、front-matter 标量；**真机**：对 `n.kkpt.tech` 实际导入并落技能）；`commands_hub::tests::*`（10 条：list/show/import/skill 的参数与坏输入）。只写本地人设/技能，不自动 apply |
 | **Hub 技能落盘（安装 / 更新 / 移除）** | `crates/engine/src/hub_skills.rs`、`crates/paths/src/lib.rs::skills_dir` | `hub_skills::tests::*`（10 条：清单、幂等、版本更新清旧文件、无清单不覆盖、dry-run、路径穿越、只删自己的文件、无清单拒绝移除、坏清单拒绝、Windows 路径分隔符） |
 | **Hub CLI（`hub list\|show\|import\|skill`）** | `apps/metis/src/main.rs`、`crates/engine/src/commands_hub.rs` | `apps/metis/tests/cli.rs` 新增 2 条（帮助列出四个子命令、坏 URL/provider/slug/skills 不联网）；`commands_hub::tests::*` 新增 3 条（provider、limit、show slug）。**真机**：`list` / `show` / `import`（1 expert + 3 skill）/ `skill remove` 全跑通 |
-| **GUI 远端人设库** | `crates/ui-egui/src/{app,state,screens}.rs` | `state` 7 条（URL 默认/持久化、游标栈、skills all/none/only、未校验确认）；`app` 3 条（坏 URL、无详情、未校验）；`screens` 4 条（列表、详情浮层、未校验、列表高度上限）。详情是独立 `Area` 浮层，提示词/参考资料/备注按 Markdown 渲染；结果列表 480px 内滚动。**真实窗口**：agent-desktop 加载 → 列表 → 详情浮层（Markdown 标题可见）通过 |
+| **GUI 远端人设库** | `crates/ui-egui/src/{app,state,screens}.rs` | `state` 7 条（URL 默认/持久化、游标栈、skills all/none/only、未校验确认）；`app` 3 条（坏 URL、无详情、未校验）；`screens` 6 条（列表、详情浮层、未校验、列表高度上限、列表高度不被页面压缩、浮层正文高度）。详情是独立 `Area` 浮层，提示词/参考资料/备注按 Markdown 渲染；结果列表固定 480px 内滚动（`max_height` + `min_scrolled_height`，见 `PITFALLS.md` G89）。**真实窗口**：agent-desktop 加载 → 列表 → 详情浮层（Markdown 标题可见）通过 |
+| **本地人设详情（GUI 浮层 + `metis show`）** | `crates/engine/src/command.rs`（`persona.show`）、`apps/metis/src/main.rs`、`crates/ui-egui/src/{app,state,screens}.rs` | 命令返回正文 + 元数据（缺失 id 属传参错误，退出 2）；CLI `metis show <id>` 人类可读 / `--json`；GUI 列表每行「详情」（无障碍名 `详情：<名称>`）打开**固定宽度 680** 的独立浮层，正文按 Markdown 渲染，说明/路径/标签自动换行，`Esc` / 点背景关闭；列表说明单独一行并**截断**，不再撑出卡片。测试：`persona_show_returns_the_body_and_metadata`、`persona_show_rejects_a_missing_id_as_invalid_argument`、CLI `show_*`（2）、`a_long_description_stays_inside_the_row_width`、`a_long_description_does_not_widen_the_persona_overlay`、`the_persona_detail_overlay_paints_only_when_selected`、`the_persona_detail_overlay_keeps_its_body_height`、`the_persona_detail_renders_loading_and_error_states`、`an_empty_persona_body_is_explained_instead_of_blank`、`spawning_a_persona_detail_loads_the_body`、`a_missing_persona_detail_reports_the_remediation`。**真机**：agent-desktop 点「详情：大肥鱼 · 岚的专属」→ 浮层 680 宽、长说明两行换行、Markdown 正文完整 |
 | **CLI 补齐（4 条）** | `apps/metis/src/main.rs` | 10 条 e2e：`use` 无 id 打印/列例外、`sync` 不改人设、`install` 只开一条通道、`install nope` 退出 2、`slash status/on/off` 往返 |
 | **`project` 通道 CLI**（登记 / 摘除 / 列出，摘除先撤盘） | `crates/engine/src/commands_project.rs` | `commands_project::tests::*`（8 条，含 `remove_takes_the_block_off_disk`、`list_flags_a_directory_that_was_deleted`）。**真机端到端验证**：add → apply 写入 `<!-- metis:begin -->` 块 → remove 后标记消失 |
 | **slash golden 测试** | `crates/channel/src/slash.rs`（`golden_tests`） | 5 份 golden（extension / opencode v1 / v2 / dsh-plugin / runtime）；**实测改模板会让它变红**；`cargo xtask golden` 重建 |
@@ -69,9 +71,9 @@
 | **探测 `doctor`**（装没装、版本、主目录、标记文件、可用通道） | `crates/harness/src/detect.rs` + `crates/engine/src/commands_probe.rs` | `detect::tests::*`（13 个）、`doctor_reports_every_harness`、CLI 端到端 2 个 |
 | **启动 `launch`**（15 家的参数形状、默认 dry-run、人设脱敏） | `crates/harness/src/launch_spec.rs` | `launch_spec::tests::*`（22 个）、`launch_preview_redacts_the_persona_body`、CLI 端到端 4 个 |
 | **一次性问答 `ask`**（12 家有参数形状，其余明确拒绝） | `crates/harness/src/launch_spec.rs::oneshot` | `oneshot_covers_the_known_harnesses_and_refuses_the_rest`、`ask_refuses_a_harness_without_a_oneshot_mode` |
-| CLI：`status`/`ls`/`use`/`mode`/`pause`/`resume`/`arm`/`disarm`/`apply`/`persona`/`rm`/`harnesses`/`doctor`/`launch`/`ask`/`hub` | `apps/metis/src/main.rs` | `apps/metis/tests/cli.rs`（**34 个端到端用例**，含 hub 帮助与坏输入） |
+| CLI：`status`/`ls`/`show`/`use`/`mode`/`pause`/`resume`/`arm`/`disarm`/`apply`/`persona`/`rm`/`harnesses`/`doctor`/`launch`/`ask`/`hub` | `apps/metis/src/main.rs` | `apps/metis/tests/cli.rs`（**36 个端到端用例**，含 hub 帮助与坏输入、`show` 的人类可读与 `--json`） |
 | 退出码约定（0 成功 / 1 运行失败 / 2 调用方传错） | `apps/metis/src/main.rs::exit_code_for` | `using_a_missing_persona_fails_with_code_2` 等 |
-| 桌面 GUI（4 个屏幕 + 主题 token + **系统 CJK 字体** + 后台任务表） | `crates/ui-egui/src/*.rs`、`apps/metis-gui/src/main.rs` | `screens::tests::*`（5 个无头渲染）、`app::tests::*`（7 个）、`cjk_font_is_installed_on_this_machine`。**已在真机开窗并截图确认渲染** |
+| 桌面 GUI（4 个屏幕 + 主题 token + **系统 CJK 字体** + 后台任务表） | `crates/ui-egui/src/*.rs`、`apps/metis-gui/src/lib.rs`、`apps/metis/src/main.rs` | `screens::tests::*`（5 个无头渲染）、`app::tests::*`（7 个）、`cjk_font_is_installed_on_this_machine`、`launch_tests::*`（无参数→GUI / 有参数→CLI）。**已在真机开窗并截图确认渲染** |
 | 工程门禁：`layers` / `docs` / `secrets` / `pending` / `ci` / `version` / `coverage` | `xtask/src/main.rs`、`xtask/src/layers.rs` | `xtask` 的 12 个自检用例（含"未注册 crate 必须失败"） |
 | 测试夹具（临时 home、假执行器、golden 比对） | `crates/testkit/src/lib.rs` | `testkit::tests::*`（7 个） |
 
@@ -86,7 +88,7 @@
 - `metis doctor --no-version` → 本机 15 家里识别出 12 家"配置目录存在"，其中 `codex`/`claude` 找到了可执行文件、
   `workbuddy`/`zcode` 正确标记为"只有桌面版"；其余 5 家报"配置目录在，但 PATH 里找不到命令"（已核实确实不在 PATH）。
 
-## 远端 Hub 真机记录（2026-11-09）
+## 远端 Hub 真机记录（2026-11-09 / 2026-11-10）
 
 - 对端：`https://n.kkpt.tech:8443`（`/hub` 是网页，API 在 origin 的 `/v1/hub/*`）
 - 协议：列表 `{items,nextCursor}`、详情 `content`、`304`/`404`/`400` 形状已核对；
@@ -94,6 +96,8 @@
 - CLI：`hub list` → `hub show` → `hub import`（1 expert + 3 skills）→ `hub skill install` → `hub skill remove`
   全部通过；所有写操作都在临时 `METIS_HOME`
 - GUI：agent-desktop 真实窗口，人设库屏 → 加载远端库 → 列表 → `详情：<名称>` → 详情卡片
+- 2026-11-10 复验高度修正：详情浮层完整显示 作者/来源/下载/提示词（Markdown 标题与有序列表），
+  列表卡片高度随 480px 视口增长（页面滚动可见）；使用临时 `METIS_HOME` 的第二个实例验证
 - 未发送遥测；未调用 `POST .../download`
 
 ## 未实现

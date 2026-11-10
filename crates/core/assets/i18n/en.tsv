@@ -4,6 +4,7 @@ state.status.title	Show status
 state.power.title	Toggle injection
 state.mode.title	Set mode
 persona.list.title	List personas
+persona.show.title	Show persona
 persona.save.title	Save persona
 persona.use.title	Use persona
 persona.remove.title	Delete persona
@@ -43,3 +44,4 @@ metis.hub-list.title	Browse the remote Hub
 metis.hub-show.title	Show a remote Hub persona
 metis.hub-skill-install.title	Install a Hub skill
 metis.hub-skill-remove.title	Remove an installed Hub skill
+channel.shim-path.title	Add the shim directory to the user PATH

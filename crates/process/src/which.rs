@@ -50,6 +50,32 @@ pub fn find_program(program: &str) -> Option<PathBuf> {
     resolve_in(program, &dirs, &extensions())
 }
 
+/// 在真实 PATH 里找程序，**跳过指定目录**。
+///
+/// 用途：`metis launch` 被 Metis 自己的 shim 触发时，PATH 第一项就是 shim 目录。
+/// 不跳过的话会再次执行 shim，形成无限递归。
+pub fn find_program_excluding(program: &str, excluded: &Path) -> Option<PathBuf> {
+    let dirs: Vec<PathBuf> =
+        std::env::var_os("PATH").map(|value| std::env::split_paths(&value).filter(|dir| !same_dir(dir, excluded)).collect()).unwrap_or_default();
+    resolve_in(program, &dirs, &extensions())
+}
+
+/// 两个路径是不是同一个目录（Windows 大小写不敏感；尽量按规范路径比较）。
+fn same_dir(a: &Path, b: &Path) -> bool {
+    if a == b {
+        return true;
+    }
+    let (Ok(a), Ok(b)) = (std::fs::canonicalize(a), std::fs::canonicalize(b)) else { return false };
+    #[cfg(windows)]
+    {
+        a.to_string_lossy().eq_ignore_ascii_case(&b.to_string_lossy())
+    }
+    #[cfg(not(windows))]
+    {
+        a == b
+    }
+}
+
 /// 进程存活探测函数（给 `metis-fs` 的控制锁用）。
 ///
 /// 由本 crate 提供，因为"起进程 / 查进程"只能有一个入口（AGENTS.md 铁律 11）。
@@ -121,6 +147,21 @@ mod tests {
     fn returns_none_when_not_found() {
         let dir = tempfile::tempdir().expect("tempdir");
         assert!(resolve_in("definitely-not-a-real-program-xyz", &[dir.path().to_path_buf()], &[]).is_none());
+    }
+
+    #[test]
+    fn same_directory_is_recognised() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let shim = dir.path().join("shim");
+        std::fs::create_dir_all(&shim).expect("mkdir");
+        let trailing = PathBuf::from(format!("{}{}", shim.display(), std::path::MAIN_SEPARATOR));
+        assert!(same_dir(&shim, &trailing), "末尾分隔符不应让同一个目录变成两个");
+        #[cfg(windows)]
+        {
+            let upper = PathBuf::from(shim.to_string_lossy().to_uppercase());
+            assert!(same_dir(&shim, &upper), "Windows 路径大小写不敏感");
+        }
+        assert!(!same_dir(&shim, &dir.path().join("other")));
     }
 
     #[test]

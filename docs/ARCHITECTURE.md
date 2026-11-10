@@ -20,8 +20,9 @@ Metis 是一个**短生命周期、本地、无守护进程**的工具。它做�
 
 ```mermaid
 flowchart TB
-  CLI["apps/metis (CLI)"]
-  GUI["apps/metis-gui (egui)"]
+  APP["apps/metis（单可执行文件）<br/>无参数 → GUI · 有子命令 → CLI"]
+  GUI["apps/metis-gui<br/>eframe 装配层（库）"]
+  CLI["CLI 分发（clap → 命令 id）"]
   ENG["metis-engine<br/>commands · state · apply · journal · verify"]
   CH["metis-channel<br/>install · shim · slash · project"]
   HARN["metis-harness<br/>detect · caps · launch spec"]
@@ -31,8 +32,10 @@ flowchart TB
   PATHS["metis-paths"]
   CORE["metis-core<br/>域模型 · 错误契约"]
 
-  CLI --> ENG
+  APP --> GUI
+  APP --> CLI
   GUI --> ENG
+  CLI --> ENG
   ENG --> CH
   ENG --> HARN
   ENG --> PER
@@ -67,8 +70,8 @@ flowchart TB
 | `metis-engine` | L2 | 命令注册表、`state.json`、激活解析、apply 编排、journal、verification、armor、doctor、update、**远端 Hub 客户端与导入（注入式网络 + ETag 缓存 + `skills/`）** | 不依赖任何 UI 类型 |
 | `metis-ui-egui` | L3 | egui 界面：屏幕、组件、主题、后台任务绑定 | 不含业务判定；不直接读写宿主配置 |
 | `metis-testkit` | dev | 临时 home、假 harness 可执行文件、假 provider、golden 比对 | 不进生产二进制 |
-| `apps/metis` | app | CLI：clap 解析 → 命令 id + 参数 → engine | 不实现业务 |
-| `apps/metis-gui` | app | eframe 壳：窗口、图标、字体、DPI、启动守卫 | 同上 |
+| `apps/metis` | app | **单可执行文件入口**：无参数 → GUI，有子命令 → CLI；CLI 只做 clap 解析 → 命令 id + 参数 → engine | 不实现业务；CLI 路径不初始化 GUI |
+| `apps/metis-gui` | app | GUI 装配层（库）：窗口、图标、字体、DPI、启动守卫；由 `apps/metis` 调用，不单独产出 exe | 同上 |
 
 **为什么把 harness 与 channel 分开**：一家 harness 支持哪些通道是它的属性（能力表），而通道怎么落盘是通用机制。
 分开之后，新增一家 harness 只写一个文件，改动绝不碰通道实现；新增一条通道也只写一个文件，改动绝不碰 15 家 harness。

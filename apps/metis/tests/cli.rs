@@ -48,13 +48,15 @@ fn version_prints_and_exits_zero() {
 }
 
 #[test]
-fn bare_invocation_prints_guidance() {
+fn help_prints_guidance_instead_of_opening_the_gui() {
+    // 无参数现在打开 GUI（见 `launch_tests`）；帮助改用 `--help`。
+    // **不要**在这里跑无参数：那会真的开一个窗口（无显示设备的环境会挂住）。
     let home = temp_home();
-    let output = metis(home.path(), &[]);
+    let output = metis(home.path(), &["--help"]);
     assert!(output.status.success());
     let text = stdout_of(&output);
-    assert!(text.contains("Metis"));
-    assert!(text.contains("metis status"), "引导里应给出可用的命令");
+    assert!(text.contains("Usage"), "缺用法说明：{text}");
+    assert!(text.contains("status"), "引导里应给出可用的命令");
 }
 
 #[test]
@@ -95,6 +97,43 @@ fn persona_save_then_list_then_use() {
     let text = stdout_of(&list);
     assert!(text.contains("concise"));
     assert!(text.contains("简洁协作"));
+}
+
+#[test]
+fn show_prints_the_full_persona() {
+    let home = temp_home();
+    let save = metis(home.path(), &["persona", "concise", "--body", "# 正文\n\n先结论。", "--name", "简洁协作", "--description", "先结论"]);
+    assert!(save.status.success(), "{}", stderr_of(&save));
+    assert!(metis(home.path(), &["use", "concise"]).status.success());
+
+    // 人类可读：名称/id/字数 + 正文原样。
+    let shown = metis(home.path(), &["show", "concise"]);
+    assert!(shown.status.success(), "{}", stderr_of(&shown));
+    let text = stdout_of(&shown);
+    assert!(text.contains("简洁协作（concise）"), "{text}");
+    assert!(text.contains("当前"), "应标出当前人设：{text}");
+    assert!(text.contains("先结论"), "{text}");
+    assert!(text.contains("# 正文\n\n先结论。"), "正文必须原样输出：{text}");
+
+    // 机器可读：字段齐全，路径指向真实文件。
+    let json = json_of(&metis(home.path(), &["show", "concise", "--json"]));
+    assert_eq!(json["id"], "concise");
+    assert_eq!(json["name"], "简洁协作");
+    assert_eq!(json["description"], "先结论");
+    assert_eq!(json["body"], "# 正文\n\n先结论。");
+    assert_eq!(json["chars"], "# 正文\n\n先结论。".chars().count());
+    assert_eq!(json["active"], true);
+    assert!(Path::new(json["path"].as_str().unwrap_or_default()).is_file(), "{}", json["path"]);
+}
+
+#[test]
+fn show_of_a_missing_persona_fails_with_code_2() {
+    let home = temp_home();
+    let output = metis(home.path(), &["show", "ghost"]);
+    assert_eq!(output.status.code(), Some(2), "名字写错属于调用方传参问题");
+    let err = stderr_of(&output);
+    assert!(err.contains("人设不存在"), "{err}");
+    assert!(err.contains("→"), "必须给出补救建议：{err}");
 }
 
 #[test]

@@ -1,14 +1,14 @@
 [package]
 name = "metis-gui"
-description = "Metis 桌面控制台（eframe 壳）"
+description = "Metis 桌面控制台装配层（库；由 metis 单可执行文件调用）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 publish = false
 
-[[bin]]
-name = "metis-gui"
-path = "src/main.rs"
+[lib]
+name = "metis_gui"
+path = "src/lib.rs"
 
 [lints]
 workspace = true
@@ -23,6 +23,3 @@ log = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }
-
-[target.'cfg(windows)'.build-dependencies]
-winresource = { workspace = true }

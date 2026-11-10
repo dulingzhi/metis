@@ -1,6 +1,6 @@
 //! 内嵌图标：Lucide 的 SVG，**在运行期按需光栅化并着色**。
 //!
-//! 为什么内嵌而不是运行期读文件：`metis-gui` 是单可执行文件工具，
+//! 为什么内嵌而不是运行期读文件：Metis 是单可执行文件工具，
 //! 发布时不会有 `assets/` 目录。`include_bytes!` 把它们编进去。
 //!
 //! 图标的授权见 `assets/icons/LICENSE-lucide.txt`（ISC）。

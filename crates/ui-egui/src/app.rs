@@ -24,6 +24,8 @@ pub enum JobDone {
     Applied(Box<metis_engine::ApplyReport>),
     /// 一次实测验证完成。
     Verified(Box<serde_json::Value>),
+    /// 把 shim 目录写进用户 PATH 的结果。
+    ShimPath(Box<CommandOutput>),
     /// 一次从 GitHub 的导入完成。
     Imported {
         /// 导入报告（命令输出的 JSON）。
@@ -71,6 +73,20 @@ pub enum JobDone {
         /// 错误信息（含补救建议）。
         message: String,
     },
+    /// 本地人设详情加载完成。
+    PersonaShown {
+        /// 请求序号；回来后对不上就丢弃（乱序保护）。
+        seq: u64,
+        /// `persona.show` 的输出。
+        value: Box<serde_json::Value>,
+    },
+    /// 本地人设详情加载失败。
+    PersonaShowFailed {
+        /// 请求序号。
+        seq: u64,
+        /// 错误信息（含补救建议）。
+        message: String,
+    },
 }
 
 /// 一次刷新拿到的快照。
@@ -88,6 +104,10 @@ pub struct Snapshot {
     pub power_on: bool,
     /// 状态文件路径。
     pub state_path: String,
+    /// `shim` 目录（裸命令接管用）。
+    pub shim_dir: String,
+    /// `shim` 目录是否在 PATH 里。`false` 时裸命令不会经过 Metis。
+    pub shim_on_path: bool,
 }
 
 /// 应用。
@@ -105,12 +125,16 @@ pub struct MetisApp {
     pub jobs: Jobs<JobDone>,
     /// 远端 Hub 的浏览状态（瞬时）。
     pub hub: HubBrowse,
+    /// 本地人设详情（瞬时）。
+    pub persona_detail: crate::state::PersonaDetailState,
     /// Markdown 渲染缓存（详情浮层用；不持久化）。
     pub markdown: egui_commonmark::CommonMarkCache,
     /// 顶部提示。
     pub notice: Option<Notice>,
     /// 正在运行的命令 id（用来禁用按钮）。
     pub busy: Option<String>,
+    /// 启动后是否已经尝试过把 shim 目录写进用户 PATH（只做一次）。
+    pub shim_path_attempted: bool,
 }
 
 impl MetisApp {
@@ -129,9 +153,11 @@ impl MetisApp {
             snapshot: Snapshot::default(),
             jobs: Jobs::new(),
             hub: HubBrowse::default(),
+            persona_detail: crate::state::PersonaDetailState::default(),
             markdown: egui_commonmark::CommonMarkCache::default(),
             notice: None,
             busy: None,
+            shim_path_attempted: false,
         }
     }
 
@@ -164,6 +190,10 @@ impl MetisApp {
         if !self.ui.palette.open && self.hub.selected.is_some() && ctx.input(|input| input.key_pressed(Key::Escape)) {
             self.hub.selected = None;
             self.hub.detail = None;
+        }
+        // 本地人设详情浮层：同样用 Esc 关闭。
+        if !self.ui.palette.open && self.persona_detail.selected.is_some() && ctx.input(|input| input.key_pressed(Key::Escape)) {
+            self.close_persona_detail();
         }
 
         // 其余快捷键在有控件持有键盘焦点时让路 ——
@@ -239,6 +269,22 @@ impl MetisApp {
                 self.notify(text, NoticeTone::Error);
                 None
             }
+        }
+    }
+
+    /// 切换某家的通道，并在**打开**时立即落盘。
+    ///
+    /// 为什么点「启用」要直接 apply：用户看到开关的预期是"文件马上出现"。
+    /// 只 `channel.set` 的话，shim / 常驻产物要等顶栏「应用变更」才写，
+    /// 用户会以为接管没生效（实测报过）。
+    ///
+    /// 关闭不需要 apply：`channel.set` 自己会把已写的内容撤盘。
+    pub fn set_channels(&mut self, harness: &str, channels: &[Channel], apply: bool) {
+        let names: Vec<&str> = channels.iter().map(|channel| channel.as_str()).collect();
+        self.invoke("channel.set", json!({ "harness": harness, "channels": names }));
+        self.refresh_blocking();
+        if apply {
+            self.spawn_apply();
         }
     }
 
@@ -405,6 +451,34 @@ impl MetisApp {
         });
     }
 
+    /// 后台读取一份本地人设的完整内容。
+    ///
+    /// 列表项不带正文（可能上万字），所以详情单独取；读盘也必须走后台，
+    /// 不能在 `show()` 里做（`docs/PITFALLS.md` D8）。
+    pub fn spawn_persona_detail(&mut self, id: String) {
+        let seq = self.persona_detail.seq.wrapping_add(1);
+        self.persona_detail.seq = seq;
+        self.persona_detail.selected = Some(id.clone());
+        self.persona_detail.detail = None;
+        self.persona_detail.loading = true;
+        self.persona_detail.error = None;
+
+        let engine = self.engine.clone();
+        let commands = Commands::default_set();
+        self.jobs.spawn("读取人设详情", move |_| match commands.run("persona.show", &engine, &json!({ "persona": id })) {
+            Ok(output) => Ok(JobDone::PersonaShown { seq, value: Box::new(output.to_json()) }),
+            Err(error) => Ok(JobDone::PersonaShowFailed { seq, message: error.to_string() }),
+        });
+    }
+
+    /// 关闭人设详情浮层。
+    pub fn close_persona_detail(&mut self) {
+        self.persona_detail.selected = None;
+        self.persona_detail.detail = None;
+        self.persona_detail.error = None;
+        self.persona_detail.loading = false;
+    }
+
     /// 后台导入选中的 expert（`dry_run=true` 只预览）。
     pub fn spawn_hub_import(&mut self, dry_run: bool) {
         if self.hub.importing {
@@ -463,6 +537,27 @@ impl MetisApp {
     fn apply_snapshot(&mut self, snapshot: Snapshot) {
         self.draft = Draft::from_saved(snapshot.saved_persona.clone(), snapshot.saved_mode);
         self.snapshot = snapshot;
+        self.maybe_ensure_shim_path();
+    }
+
+    /// 启动后第一次发现「shim 已武装、但目录不在 PATH」时，自动写用户级 PATH。
+    ///
+    /// 只做一次（`shim_path_attempted`），并且**测试环境直接跳过**：单元测试
+    /// 会武装 shim 并刷新，如果这里真跑 PowerShell 就会改开发机的用户 PATH。
+    fn maybe_ensure_shim_path(&mut self) {
+        if cfg!(test) || self.shim_path_attempted || self.snapshot.shim_on_path {
+            return;
+        }
+        if !self.snapshot.harnesses.iter().any(|row| row.is_armed(Channel::Shim)) {
+            return;
+        }
+        self.shim_path_attempted = true;
+        let engine = self.engine.clone();
+        let commands = Commands::default_set();
+        self.jobs.spawn("配置 shim PATH", move |_| {
+            let output = commands.run("channel.shim-path", &engine, &json!({}))?;
+            Ok(JobDone::ShimPath(Box::new(output)))
+        });
     }
 
     /// 设置提示。
@@ -485,6 +580,9 @@ impl MetisApp {
                     self.refresh_blocking();
                 }
                 Finished::Failed(_, error) => self.notify(error.message().to_owned(), NoticeTone::Error),
+                Finished::Done(_, JobDone::ShimPath(output)) => {
+                    self.notify(notice_for("channel.shim-path", &output), NoticeTone::Success);
+                }
                 Finished::Done(_, JobDone::Verified(value)) => {
                     let passed = value
                         .get("results")
@@ -568,6 +666,29 @@ impl MetisApp {
                         self.notify(message, NoticeTone::Error);
                     }
                 }
+                Finished::Done(_, JobDone::PersonaShown { seq, value }) => {
+                    if seq == self.persona_detail.seq {
+                        self.persona_detail.loading = false;
+                        match serde_json::from_value::<crate::state::PersonaDetail>(*value) {
+                            Ok(detail) => {
+                                self.persona_detail.detail = Some(detail);
+                                self.persona_detail.error = None;
+                            }
+                            Err(error) => {
+                                let text = format!("解析人设详情失败：{error}");
+                                self.persona_detail.error = Some(text.clone());
+                                self.notify(text, NoticeTone::Error);
+                            }
+                        }
+                    }
+                }
+                Finished::Done(_, JobDone::PersonaShowFailed { seq, message }) => {
+                    if seq == self.persona_detail.seq {
+                        self.persona_detail.loading = false;
+                        self.persona_detail.error = Some(message.clone());
+                        self.notify(message, NoticeTone::Error);
+                    }
+                }
                 Finished::Done(_, JobDone::HubImported { value, dry_run }) => {
                     self.hub.importing = false;
                     if !dry_run {
@@ -627,10 +748,14 @@ fn empty_report() -> metis_engine::ApplyReport {
 fn collect_snapshot_with(engine: &Engine, commands: &Commands) -> metis_core::Result<Snapshot> {
     let state = engine.state()?;
     let mut harnesses = Vec::new();
+    let mut shim_dir = String::new();
+    let mut shim_on_path = false;
     if let Ok(CommandOutput::Json(value)) = commands.run("harness.list", engine, &json!({"detect": true}))
         && let Some(items) = value.get("harnesses").and_then(|v| v.as_array())
     {
         {
+            shim_dir = value.pointer("/shim/dir").and_then(|v| v.as_str()).unwrap_or_default().to_owned();
+            shim_on_path = value.pointer("/shim/onPath").and_then(|v| v.as_bool()).unwrap_or(false);
             for item in items {
                 let id = item.get("id").and_then(|v| v.as_str()).unwrap_or_default();
                 let Some(spec) = metis_harness::registry::find(id) else { continue };
@@ -681,6 +806,8 @@ fn collect_snapshot_with(engine: &Engine, commands: &Commands) -> metis_core::Re
         saved_mode: state.default.mode,
         power_on: state.default.mode != Mode::Off,
         state_path: engine.paths().state_file().display().to_string(),
+        shim_dir,
+        shim_on_path,
     })
 }
 
@@ -728,6 +855,7 @@ impl eframe::App for MetisApp {
         // 详情浮层：盖在内容之上，独立于布局。
         crate::screens::show_detail(self, ui.ctx());
         crate::screens::show_hub_detail(self, ui.ctx());
+        crate::screens::show_persona_detail(self, ui.ctx());
 
         // 命令面板画在最上层（`Ctrl+K` 或顶栏入口唤起）。
         //
@@ -784,6 +912,31 @@ mod tests {
         app.invoke("persona.save", json!({"persona": "p", "body": "正文"}));
         let notice = app.notice.as_ref().expect("notice");
         assert_eq!(notice.tone, NoticeTone::Success);
+    }
+
+    #[test]
+    fn spawning_a_persona_detail_loads_the_body() {
+        let (_dir, mut app) = app();
+        app.invoke("persona.save", json!({ "persona": "p", "body": "# 正文\n\n内容", "name": "简洁" }));
+        app.spawn_persona_detail("p".to_owned());
+        wait_for_idle(&mut app);
+        assert_eq!(app.persona_detail.selected.as_deref(), Some("p"));
+        let detail = app.persona_detail.detail.as_ref().expect("详情应已加载");
+        assert_eq!(detail.id, "p");
+        assert_eq!(detail.name, "简洁");
+        assert_eq!(detail.body, "# 正文\n\n内容");
+        assert!(!app.persona_detail.loading);
+        assert!(app.persona_detail.error.is_none());
+    }
+
+    #[test]
+    fn a_missing_persona_detail_reports_the_remediation() {
+        let (_dir, mut app) = app();
+        app.spawn_persona_detail("ghost".to_owned());
+        wait_for_idle(&mut app);
+        let error = app.persona_detail.error.as_deref().expect("应记录错误");
+        assert!(error.contains("人设不存在"), "{error}");
+        assert!(error.contains("metis ls"), "错误里必须带补救建议：{error}");
     }
 
     #[test]
@@ -849,6 +1002,42 @@ mod tests {
         wait_for_idle(&mut app);
         assert!(!app.jobs.is_busy(), "刷新应在合理时间内结束");
         assert!(!app.snapshot.harnesses.is_empty(), "刷新后快照应有内容");
+    }
+
+    #[test]
+    fn enabling_a_channel_writes_it_immediately() {
+        // 回归（用户报"GUI 里激活 claude 后没有生成 shim\claude.cmd"）：
+        // 只改 state 不落盘会让人以为接管没生效。打开开关必须当场 apply。
+        let dir = tempfile::tempdir().expect("tmp");
+        let home = dir.path().join("home");
+        let mut app = MetisApp::with_paths(Paths::with_home(home.clone()));
+        app.invoke("persona.save", json!({ "persona": "p", "body": "正文" })).expect("save");
+        app.invoke("persona.use", json!({ "persona": "p" })).expect("use");
+
+        app.set_channels("claude", &[Channel::Shim], true);
+        wait_for_idle(&mut app);
+
+        let shim = home.join("shim").join("claude.cmd");
+        assert!(shim.is_file(), "启用 shim 后必须立刻写出 {}", shim.display());
+        let text = std::fs::read_to_string(&shim).expect("read shim");
+        assert!(text.contains("--exec"), "shim 必须带 --exec：{text}");
+    }
+
+    #[test]
+    fn disabling_a_channel_removes_the_shim_without_apply() {
+        let dir = tempfile::tempdir().expect("tmp");
+        let home = dir.path().join("home");
+        let mut app = MetisApp::with_paths(Paths::with_home(home.clone()));
+        app.invoke("persona.save", json!({ "persona": "p", "body": "正文" })).expect("save");
+        app.invoke("persona.use", json!({ "persona": "p" })).expect("use");
+
+        app.set_channels("claude", &[Channel::Shim], true);
+        wait_for_idle(&mut app);
+        let shim = home.join("shim").join("claude.cmd");
+        assert!(shim.is_file());
+
+        app.set_channels("claude", &[], false);
+        assert!(!shim.exists(), "关闭通道必须当场撤盘");
     }
 
     #[test]

@@ -64,9 +64,16 @@ pub enum Screen { Console, Library, Diagnostics, About }
 
 - 通道开关：`接管命令(shim)` / `常驻(install)` / `会话内(slash)` / `项目(project)`，各自三态：
   **开**、**关**、**不可用（灰 + 悬停/展开说明 why）**。
+- **开关即落盘**：打开某条通道会先 `channel.set`，再立即后台 `apply` 写盘；
+  关闭会立即撤掉这条通道写过的内容。顶栏 `应用变更` 仍用于人设/模式的草稿。
+  单条「启用」只追加这一条，不会把其他已武装通道一起关掉。
 - `详情` 展开后显示：落点文件路径（等宽字体）、层级（system / developer / user）、热切能力
   （`下一轮生效` / `需新会话`，以及为什么）、本次生效的人设与模式（含"来自分家例外"标记）、
   基线里的残留说明。
+- `接管命令(shim)` 已开启但 shim 目录不在 PATH 时，GUI 启动会自动把该目录写进
+  **用户级** PATH（`HKCU\Environment`，保留原值类型并广播），并在详情里提示
+  "已自动加入用户 PATH；重开终端后生效"。没有自动配置成功时显示手动命令
+  （见 `PITFALLS.md` G94/G95）。
 - 未安装的执行器默认折叠在"显示本机没装的"之后，且它的开关全部为不可用并说明原因（"PATH 里找不到 `codex`"）。
 
 ### 2.2 人设库（Library）
@@ -74,7 +81,8 @@ pub enum Screen { Console, Library, Diagnostics, About }
 | 区块 | 内容 | 基线对应 |
 |---|---|---|
 | 页头 | 标题「人设库」+ 副标题「正文用于提示词，名称与说明只用于管理。」；`从外部拉取`、`新建人设` | `#pull-personas`、`#new-persona` |
-| 列表 | 搜索框 + 人设卡片列表（名称、id、描述、当前使用标记、字数）；点击选中 | `#persona-search`、`#persona-list` |
+| 列表 | 搜索框 + 人设卡片列表（名称、id、**单行截断的说明**、当前使用标记、字数、`详情：<名称>`）；说明只展示摘要，完整正文进详情浮层 | `#persona-search`、`#persona-list` |
+| 本地人设详情 | 独立浮层（**固定宽度 680**，窄窗时按 `screen.width()-48` 收缩）：标题（名称 + 当前徽标 + 字数）、id / 说明 / 字数 / 文件路径 / 适用执行器与模型 / 解析告警、Markdown 渲染的正文；长说明与长路径按可用宽度换行，不撑宽浮层；`Esc`、背景点击、`关闭` 退出 | `#persona-detail` |
 | 编辑器 | id（只读或受限编辑）、名称、描述、model/harness 标签、正文多行编辑 + 实时字数、`保存`、`删除` | `#edit-id`、`#edit-name`、`#edit-desc`、`#edit-body`、`#char-count`、`#save-persona`、`#delete-persona` |
 | 导入对话框 | 来源（本地目录 / GitHub `owner/repo`）、是否覆盖同名、进度与逐条结果、`开始导入`、`取消` | `#import-dialog`、`#import-source`、`#import-overwrite`、`#start-import` |
 | 远端人设库 | Hub 地址（持久化）、搜索 / 标签 / provider、`加载远端库` / `刷新`、分页（`上一页` / `第 N 页` / `下一页` / 每页条数）、条目列表（名称、版本、官方/校验徽标、下载数、`详情：<名称>`；列表最大高度 480px，内部滚动）；**独立详情浮层**（标题栏 + 内容滚动区 + Markdown 渲染的提示词/参考资料/备注 + `导入` / `预览`，见 2.2 规则） | `#hub-url`、`#hub-load`、`#hub-search`、`#hub-page-prev`、`#hub-page-next`、`#hub-detail`、`#hub-import` |
@@ -90,8 +98,10 @@ pub enum Screen { Console, Library, Diagnostics, About }
 - 分页游标不透明，只提供上一页/下一页；最后一页正好满时下一页可能为空，要能回到上一页。
 - 关联技能默认全选，导入时落到 `~/.metis/skills/<slug>/`，本地路径写回人设正文。
 - 列表每行的「详情」按钮在无障碍树里必须带条目名（`详情：<名称>`），否则 `agent-desktop` 报 `AMBIGUOUS_TARGET`。
-- 详情是**独立浮层**（`Area + Order::Foreground`），不内联在列表下方；`Esc`、背景点击、右上角「关闭」都能关。提示词、参考资料、备注按 **Markdown** 渲染（`egui_commonmark`）。
-- 结果列表最大高度 480px，超出在列表内滚动；分页控件留在滚动区外，不随结果数量把整页撑长。
+- **本地人设**的说明只显示一行并截断（`Label::truncate`）；`ui.horizontal` 里的长文本不会折行，会把行撑出卡片（`PITFALLS.md` G96）。完整正文走 `persona.show` / `metis show`，在独立浮层里按 Markdown 渲染。
+- 本地人设详情浮层**固定宽度**（680，窄窗收缩）；「说明 / 文件 / 适用执行器 / 适用模型」用标签在上、值在下并自动换行（`detail_block`）—— 放进 `widgets::key_value` 的横向行会被长文本撑宽浮层。
+- 详情是**独立浮层**（`Area + Order::Foreground`），不内联在列表下方；`Esc`、背景点击、右上角「关闭」都能关。提示词、参考资料、备注按 **Markdown** 渲染（`egui_commonmark`）。浮层正文滚动区必须同时设 `max_height` 与 `min_scrolled_height`（`Area` 的可用高度取自上一帧，只设上限会把正文压没，见 `PITFALLS.md` G89）。
+- 结果列表固定 480px 高（`max_height` + `min_scrolled_height`），超出在列表内滚动；内容不足时收缩到内容高度。分页控件留在滚动区外，不随结果数量把整页撑长。
 
 ### 2.3 验证与诊断（Diagnostics）
 

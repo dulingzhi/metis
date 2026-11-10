@@ -1,6 +1,6 @@
 [package]
 name = "metis"
-description = "Metis CLI：一份人设，统一管理多个 coding agent"
+description = "Metis：一份人设，统一管理多个 coding agent（CLI + 桌面控制台）"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -20,6 +20,8 @@ metis-harness = { workspace = true }
 metis-paths = { workspace = true }
 metis-persona = { workspace = true }
 metis-fs = { workspace = true }
+# GUI 壳：无参数启动时由 `main` 调用。**CLI 路径不初始化它**（headless 优先）。
+metis-gui = { path = "../metis-gui" }
 clap = { workspace = true }
 serde_json = { workspace = true }
 

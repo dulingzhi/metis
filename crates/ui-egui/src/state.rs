@@ -359,6 +359,58 @@ impl HubBrowse {
     }
 }
 
+/// 本地人设详情（瞬时，不持久化）。
+///
+/// 与 [`HubBrowse`] 同一条规则：详情弹没弹、选的是谁，都不该跨进程保留。
+#[derive(Debug, Clone, Default)]
+pub struct PersonaDetailState {
+    /// 正在看的 id。
+    pub selected: Option<String>,
+    /// `persona.show` 的输出。
+    pub detail: Option<PersonaDetail>,
+    /// 加载中。
+    pub loading: bool,
+    /// 加载错误（含补救建议）。
+    pub error: Option<String>,
+    /// 请求序号（丢弃过期结果）。
+    pub seq: u64,
+}
+
+/// `persona.show` 的输出。
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PersonaDetail {
+    /// id。
+    #[serde(default)]
+    pub id: String,
+    /// 显示名。
+    #[serde(default)]
+    pub name: String,
+    /// 说明。
+    #[serde(default)]
+    pub description: Option<String>,
+    /// 正文字符数。
+    #[serde(default)]
+    pub chars: usize,
+    /// 是否当前生效。
+    #[serde(default)]
+    pub active: bool,
+    /// 文件路径。
+    #[serde(default)]
+    pub path: String,
+    /// 正文（Markdown）。
+    #[serde(default)]
+    pub body: String,
+    /// 适用执行器标签。
+    #[serde(default)]
+    pub harness: Vec<String>,
+    /// 适用模型标签。
+    #[serde(default)]
+    pub model: Vec<String>,
+    /// 解析告警。
+    #[serde(default)]
+    pub warnings: Vec<String>,
+}
+
 /// 控制台上的表单草稿。
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct Draft {

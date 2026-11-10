@@ -41,7 +41,9 @@ Metis 把这些差异收在一处：你只维护一份人设，剩下的它来�
 | Linux x64 | `metis-<版本>-linux-x64.tar.gz` |
 | macOS ARM64 | `metis-<版本>-macos-arm64.tar.gz` |
 
-免安装、不写注册表、不需要管理员权限。每个包都有对应的 `.sha256`：
+免安装、不需要管理员权限。**唯一会写注册表的地方**：GUI 启动时如果发现已启用
+「接管命令」而 shim 目录不在 PATH，会把该目录写进**用户级** PATH
+（`HKCU\Environment`；不写系统级、不需要管理员）。每个包都有对应的 `.sha256`：
 
 ```sh
 sha256sum -c metis-0.1.0-linux-x64.tar.gz.sha256
@@ -53,7 +55,7 @@ sha256sum -c metis-0.1.0-linux-x64.tar.gz.sha256
 git clone https://github.com/dulingzhi/metis
 cd metis
 cargo build --release
-# 产物：target/release/metis（CLI）、target/release/metis-gui（桌面控制台）
+# 产物：target/release/metis（CLI 与桌面控制台共用同一个可执行文件）
 ```
 
 需要 Rust **1.98+**（用了 edition 2024 与 let-chains）。
@@ -79,6 +81,7 @@ metis apply                                   # 5. 真的写进去
 ```sh
 metis import dulingzhi/metis-personas   # 5 份起步人设
 metis ls                                # 看看有哪些
+metis show concise                      # 看这份人设的完整正文
 metis use concise                       # 用其中一份
 ```
 
@@ -93,10 +96,10 @@ metis hub import expert/<slug>          # 导入人设；关联 skill 落到 ~/.
 `metis hub` 默认指向内置的公开 Hub；用 `--url` 或 `METIS_HUB_URL` 可以换成自建 worldd。
 导入只写本地人设与技能目录，**不会自动 apply**。
 
-图形界面：
+图形界面（与 CLI 是同一个 exe）：
 
 ```sh
-metis-gui
+metis            # 不带参数 → 桌面控制台；双击 metis.exe 效果相同
 ```
 
 人设库屏可以直接浏览/导入远端 Hub（worldd / KK Hub）；导入只写本地，不会自动 apply。
@@ -178,6 +181,7 @@ order: 10
 | `metis doctor` | 探测本机装了哪些 agent（15 家） |
 | `metis harnesses` | 每家的能力表：支持哪些通道、为什么不可用 |
 | `metis ls` | 列出人设，`*` 标当前 |
+| `metis show <id>` | 查看一份人设的完整正文与元数据（`--json` 机器可读） |
 | `metis use <id>` | 换人设 |
 | `metis mode <m>` | 换模式 |
 | `metis arm <h>` / `metis disarm <h>` | 开启 / 关闭某家的通道 |
@@ -305,8 +309,8 @@ crates/
   ui-egui     L3  egui 桌面界面（唯一允许依赖 egui 的 crate）
   testkit        测试夹具：临时 home、假 harness、golden 比对
 apps/
-  metis          CLI
-  metis-gui      桌面应用（eframe 壳）
+  metis          单可执行文件入口：无参数 → GUI，有子命令 → CLI
+  metis-gui      GUI 装配层（库；被 metis 调用）
 xtask/           工程门禁与工具链
 assets/          应用图标
 docs/            设计文档与规格

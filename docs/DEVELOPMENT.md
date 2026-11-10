@@ -114,18 +114,26 @@ tempfile = "3"
 新增 crate 的四步：建目录 → `[workspace.dependencies]` 加 `metis-<x> = { path = "crates/<x>" }` →
 `LAYERS` 加一行 → 建 `Cargo.toml` 与 `src/lib.rs`。漏任何一步，`cargo xtask layers` 会拦住。
 
-## 4. eframe 应用骨架（`apps/metis-gui/src/main.rs`）
+## 4. GUI 装配层与单可执行文件入口（`apps/metis-gui/src/lib.rs` + `apps/metis/src/main.rs`）
 
-按下面的顺序写，每一步都有它存在的理由：
+**GUI 不是独立 exe**：`apps/metis-gui` 是库，`apps/metis` 的 `main` 按参数分发——
+无参数调用 `metis_gui::run()`（同一进程开窗），其余走 clap CLI（AGENTS 铁律 12）。
+Windows 上整个 exe 链接为 **GUI 子系统**（`#![cfg_attr(windows, windows_subsystem = "windows")]`），
+双击不会出现控制台。CLI 的输出依赖进程启动时继承的 stdio 句柄：cmd / PowerShell 管道 /
+CI 都正常；PowerShell 的 `>` 重定向不等待 GUI 进程（文件可能是空的），要用管道。
+CLI 模式启动时先 `AttachConsole(ATTACH_PARENT_PROCESS)`（`apps/metis/src/win_console.rs`，
+全仓库唯一的 unsafe 例外）：不关联父控制台的话，`launch --exec` 启动的 console 宿主
+（claude / codex）会被 Windows 另开一个控制台窗口。
+
+GUI 壳内部按下面的顺序写，每一步都有它存在的理由：
 
 ```rust
-//! Metis 桌面控制台。
+//! Metis 桌面控制台的装配层。
 #![deny(clippy::unwrap_used, clippy::expect_used, clippy::panic, clippy::unimplemented, clippy::todo, clippy::unreachable)]
-#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]  // 发布版不弹控制台窗口
 ```
 
-1. **`--version` / `-V` 早退**：打印 `metis-gui {CARGO_PKG_VERSION}`，直接 `return Ok(())`，不开窗口。
-   （打包脚本与用户都靠它核对版本。）
+1. **`--version` / `-V`**：由 `apps/metis` 的 clap 处理（`metis --version`），
+   GUI 库不参与；打包脚本与用户都靠它核对版本，这条路径不能起窗口。
 2. **文件日志**：写到数据目录下的 `logs/gui.log`，上限 512 KiB，超过就重建；装 `std::panic::set_hook`
    把 panic 也写进去。**日志是崩溃现场唯一的证据**。
 3. **启动守卫**：数据目录里放一个 `starting` 标记文件（内容 = pid）。`begin()` 写、窗口真正显示后
@@ -303,6 +311,9 @@ pub struct MetisError { kind: ErrorKind, message: String, remediation: Option<St
 - 外部程序只有 `metis-process` 一个入口：stdin 默认关闭、双截止时间（墙钟 + 空闲）、
   输出上限（stdout 16 MiB / stderr 1 MiB / 单行 16 MiB，超限只留头尾并标记截断）、
   独立线程排空、Unix 进程组 / Windows Job Object + `CREATE_NO_WINDOW`。
+- **交互式会话是唯一例外**：`metis launch --exec`（shim 接管命令）走
+  `metis-process::run_interactive`，继承 stdin/stdout/stderr；Unix 用 `exec` 替换进程，
+  Windows spawn + wait 并回传退出码。自动化外部命令仍必须用 `Exec`。
 - 命令行有长度上限（Windows 约 32767 字符）：**长内容一律走 stdin 或临时文件**，不塞进命令行参数。
 - **一个持久化文件只能有一个写入者**：`state.json` 只由 `metis-engine` 写；
   账本只由 `metis-fs` 写；宿主配置只由 `metis-channel` 写。跨模块"顺手写一下"是事故来源。

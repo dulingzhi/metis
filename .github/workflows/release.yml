@@ -80,7 +80,7 @@ jobs:
             libgl1-mesa-dev libssl-dev pkg-config zip
 
       - name: 构建
-        run: cargo build --release -p metis -p metis-gui
+        run: cargo build --release -p metis
 
       # **打包前冒烟**：一个打不开的二进制不该进发布物。
       - name: 冒烟
@@ -108,9 +108,8 @@ jobs:
           NAME="metis-${VERSION}-${{ matrix.target }}"
           mkdir -p "dist/$NAME"
           cp target/release/metis "dist/$NAME/"
-          cp target/release/metis-gui "dist/$NAME/"
           cp LICENSE-MIT LICENSE-APACHE README.md "dist/$NAME/"
-          chmod +x "dist/$NAME/metis" "dist/$NAME/metis-gui"
+          chmod +x "dist/$NAME/metis"
           cd dist
           tar czf "$NAME.tar.gz" "$NAME"
           rm -rf "$NAME"
@@ -173,10 +172,10 @@ jobs:
           ## 用法
 
           \`\`\`sh
+          metis                   # 图形控制台（不带参数；双击即用）
           metis --help            # 全部命令
           metis doctor            # 看看本机装了哪些 agent
           metis import dulingzhi/metis-personas   # 导入官方人设
-          metis-gui               # 图形控制台
           \`\`\`
 
           ## 卸载

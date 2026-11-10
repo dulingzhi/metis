@@ -4,6 +4,7 @@ state.status.title	查看状态
 state.power.title	开关注入
 state.mode.title	设定模式
 persona.list.title	列出人设
+persona.show.title	查看人设
 persona.save.title	保存人设
 persona.use.title	选用人设
 persona.remove.title	删除人设
@@ -43,3 +44,4 @@ metis.hub-list.title	浏览远端 Hub 人设
 metis.hub-show.title	查看远端 Hub 人设详情
 metis.hub-skill-install.title	安装 Hub 技能
 metis.hub-skill-remove.title	移除已安装的 Hub 技能
+channel.shim-path.title	把 shim 目录加入用户 PATH

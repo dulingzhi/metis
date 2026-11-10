@@ -1,8 +1,9 @@
 # AGENTS.md：Metis 的 AI 代理与贡献者指南
 
 Metis 是一个**纯 Rust、原生、单可执行文件**的本地工具：一份人设（persona），统一管理 Codex、Claude Code、
-OpenCode、pi、DSH 等 15 家 coding agent 的系统提示词。它同时提供 CLI（`metis`）和 egui 桌面控制台（`metis-gui`），
-两者共用同一个 headless 引擎。功能基线是 **agent-purge v0.2.19**，逐项对齐记录在 `docs/PARITY.md`。
+OpenCode、pi、DSH 等 15 家 coding agent 的系统提示词。CLI 与 egui 桌面控制台是**同一个 `metis` 可执行文件**
+（无参数启动 GUI，有子命令走 CLI；见铁律 12），两者共用同一个 headless 引擎。功能基线是 **agent-purge v0.2.19**，
+逐项对齐记录在 `docs/PARITY.md`。
 
 **独立实现原则**：本仓库不复制 agent-purge 的代码、脚本、文案、命名或资源。对齐的是**可观察行为**（命令语义、
 磁盘格式、注入产物、错误判定），不是实现。任何一处不得直接粘贴上游代码。
@@ -28,8 +29,8 @@ crates/
   ui-egui     L3  egui 桌面界面（唯一允许依赖 egui / eframe / winit / rfd 的 crate）
   testkit        测试夹具：临时 home、假 harness 可执行文件、golden 文件比对
 apps/
-  metis           CLI
-  metis-gui       桌面应用（eframe 壳）
+  metis           单可执行文件入口：无参数 → GUI，有子命令 → CLI
+  metis-gui       GUI 装配层（库：eframe 壳、启动守卫；被 metis 调用，不单独出 exe）
 xtask/            cargo xtask：layers | fmt | clippy | test | coverage | secrets | pending | ci | version
 ```
 
@@ -60,7 +61,12 @@ xtask/            cargo xtask：layers | fmt | clippy | test | coverage | secret
    截图或提交信息，只用明显的假值（`sk-test`、`C:\Users\example`）。`cargo xtask secrets` 检查将要提交的内容。
    默认不监听端口、不发送遥测。远端 Hub 只读公开数据；导入只写本地，不自动 `apply`；
    `verified=false` 的条目必须二次确认。
-9. **只用安全 Rust。** 全仓库 `unsafe_code = "forbid"`，无例外。依赖必须能在安全代码中使用（`deny.toml` 把关）。
+9. **只用安全 Rust。** 全仓库 `unsafe_code = "deny"`。**唯一允许的 unsafe** 是
+   `apps/metis/src/win_console.rs` 里的 `AttachConsole(ATTACH_PARENT_PROCESS)`：
+   无指针、无内存契约，只用于让 GUI 子系统的 CLI 子进程继承父控制台（否则交互式宿主
+   会被 Windows 另开一个控制台窗口）；attach 前必须保存三个 std 句柄、attach 后
+   `SetStdHandle` 还原，否则重定向输出会被吞掉。新增任何其他 unsafe 必须先在 AGENTS
+   里写明理由并经维护者同意。依赖必须能在安全代码中使用（`deny.toml` 把关）。
 10. **不乱锁、不锁死。** 只用 `metis-fs` 提供的控制锁与平台同步原语，不用裸 `std::sync::Mutex` 做跨进程/跨线程
     契约。长时间持有的锁必须具名（`guard.label(id)`），等待方不会误判死锁。
 11. **外部程序只有一个入口。** 任何外部命令（harness、node、git、浏览器、更新下载）都必须经由
@@ -70,6 +76,20 @@ xtask/            cargo xtask：layers | fmt | clippy | test | coverage | secret
     - 超时、取消、drop 都要终止子进程**及其进程组**；
     - 程序缺失、非零退出、输出异常、超时都变成带**补救建议**的 `MetisError`，不是 panic，也不是挂死；
     - 任何慢操作都不得跑在 UI 线程上。
+    - **交互式启动是唯一例外**：`metis launch --exec`（shim 接管命令）必须经
+      `metis-process::run_interactive` **继承** stdin/stdout/stderr，否则交互式宿主
+      （claude / codex 等 TUI）无法使用；自动化外部命令仍必须走 `Exec`。
+12. **一个 exe，两种入口。** CLI 与 GUI 必须留在同一个 `metis` 可执行文件里：
+    - **无参数** → 桌面控制台（同一进程开窗，不再重新拉起子进程）；**有子命令或旗标** → CLI
+      （`--help` / `--version` 由 clap 处理）；
+    - Windows 上链接为 **GUI 子系统**：双击/无参数启动不出现控制台窗口。CLI 的输出依赖
+      进程启动时继承的 stdio 句柄：cmd、PowerShell 管道、CI/harness 都正常；
+      **PowerShell 的 `>` 重定向不会等待 GUI 进程**（文件可能是空的），要用管道或
+      `Start-Process -Wait -RedirectStandardOutput`；
+    - **PATH 自动配置**：GUI 启动时若已武装 `shim` 而 shim 目录不在 PATH，调用
+      `channel.shim-path` 把该目录写进**用户级** PATH（`HKCU\Environment`；保留原值类型、
+      广播 `WM_SETTINGCHANGE`）。这是唯一写注册表的地方，不写系统级、不需要管理员；
+    - CLI 路径不得初始化 GUI（headless 优先，铁律 6）；GUI 壳保持薄客户端（铁律 7）。
 
 ---
 
@@ -256,7 +276,7 @@ agent-desktop skills get platform    # 本平台差异（Windows 的坑都在这
 
 ```powershell
 # PowerShell 会把裸 @token 当成 splatting，ref 必须加引号
-agent-desktop snapshot --skeleton --app "metis-gui" -i --compact
+agent-desktop snapshot --skeleton --app "metis" -i --compact
 agent-desktop click '@s8f3k2p9:e12'
 agent-desktop snapshot --root '@s8f3k2p9:e3' -i --compact   # 验证：重读同一区域
 agent-desktop find --role button --name "应用变更"
