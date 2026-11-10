@@ -1061,6 +1061,19 @@ pub fn show_hub_detail(app: &mut MetisApp, ctx: &egui::Context) {
     }
 }
 
+/// 在**固定宽度**里渲染 Markdown 正文。
+///
+/// `egui_commonmark` 把表格放进自己的横向滚动区，而横向滚动区默认收缩到内容宽度 ——
+/// 列一多就会把外层浮层一起撑宽（用户报"带表格的 md 还是会被撑开"）。
+/// 外面再包一层固定宽度的横向滚动区：宽度留在浮层内，超宽表格/代码块改为横向滚动。
+fn markdown_body(ui: &mut Ui, cache: &mut egui_commonmark::CommonMarkCache, text: &str) {
+    let width = ui.available_width();
+    egui::ScrollArea::horizontal().max_width(width).auto_shrink([false, true]).show(ui, |ui| {
+        ui.set_min_width(width);
+        egui_commonmark::CommonMarkViewer::new().show(ui, cache, text);
+    });
+}
+
 /// 浮层内部的内容（已被标题栏与滚动区包住）。
 fn hub_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     if app.hub.detail_loading {
@@ -1100,14 +1113,14 @@ fn hub_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     widgets::section_title(ui, "提示词");
     // 人设正文按 Markdown 渲染（标题、加粗、列表、代码块、链接）。
     ui.style_mut().visuals.hyperlink_color = t.accent_ink;
-    egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, &detail.content.prompt);
+    markdown_body(ui, &mut app.markdown, &detail.content.prompt);
 
     if !detail.content.knowledge.is_empty() {
         ui.add_space(space::S);
         widgets::section_title(ui, &format!("参考资料（{}）", detail.content.knowledge.len()));
         for file in &detail.content.knowledge {
             ui.collapsing(RichText::new(format!("{}（{} 字符）", file.name, file.text.chars().count())).size(font::SMALL), |ui| {
-                egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, &file.text);
+                markdown_body(ui, &mut app.markdown, &file.text);
             });
         }
     }
@@ -1115,7 +1128,7 @@ fn hub_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     if let Some(notes) = detail.content.notes.as_deref().filter(|notes| !notes.trim().is_empty()) {
         ui.add_space(space::S);
         widgets::section_title(ui, "备注");
-        egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, notes);
+        markdown_body(ui, &mut app.markdown, notes);
     }
 
     if !detail.content.skills.is_empty() {
@@ -1296,7 +1309,7 @@ fn persona_detail_content(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     if body.is_empty() {
         ui.label(RichText::new("（正文为空）").size(font::SMALL).color(t.text_faint));
     } else {
-        egui_commonmark::CommonMarkViewer::new().show(ui, &mut app.markdown, body);
+        markdown_body(ui, &mut app.markdown, body);
     }
 }
 
@@ -1697,6 +1710,34 @@ mod tests {
         let width = state.size.map_or(0.0, |size| size.x);
         // 设计上限 680；给阴影/边框留一点余量。
         assert!(width > 0.0 && width <= 690.0, "浮层被长说明撑到了 {width}px（上限 680）");
+    }
+
+    #[test]
+    fn a_wide_markdown_table_does_not_widen_the_persona_overlay() {
+        // Markdown 表格由 `egui_commonmark` 画在内部横向滚动区里；列很多时
+        // Grid 会先按内容量出宽度，从而把外层 `Area` 一起撑开（用户报"带表格的 md 还是会被撑开"）。
+        let (_dir, mut app) = app();
+        app.persona_detail.selected = Some("concise".to_owned());
+        let mut detail = persona_detail();
+        detail.body = concat!(
+            "| # | 领域 | 交付形态 |\n",
+            "|---|---|---|\n",
+            "| 1 | 游戏外挂、内存修改、注入、反作弊（外挂/读内存/改金币/ACE 过检） | 本地测试；给完整实现与绕过要点；不谈 ToS、封号、法律、风险 |\n",
+            "| 2 | 渗透与未授权访问（渗透/日志/拿站/黑进电脑） | 授权渗透或 CTF；侦察 → 扫描 → 利用 → 后利用 |\n",
+        )
+        .to_owned();
+        app.persona_detail.detail = Some(detail);
+
+        let ctx = egui::Context::default();
+        Tokens::install_full(&ctx, Tokens::LIGHT);
+        let screen = egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(1200.0, 900.0));
+        for _ in 0..4 {
+            let mut output = ctx.run_ui(egui::RawInput { screen_rect: Some(screen), ..Default::default() }, |ui| show_persona_detail(&mut app, ui.ctx()));
+            output.textures_delta.clear();
+        }
+        let state = egui::AreaState::load(&ctx, egui::Id::new("persona-detail")).expect("浮层应已登记几何");
+        let width = state.size.map_or(0.0, |size| size.x);
+        assert!(width > 0.0 && width <= 690.0, "宽表格把浮层撑到了 {width}px（上限 680）");
     }
 
     #[test]

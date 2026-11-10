@@ -100,6 +100,7 @@ pub enum Screen { Console, Library, Diagnostics, About }
 - 列表每行的「详情」按钮在无障碍树里必须带条目名（`详情：<名称>`），否则 `agent-desktop` 报 `AMBIGUOUS_TARGET`。
 - **本地人设**的说明只显示一行并截断（`Label::truncate`）；`ui.horizontal` 里的长文本不会折行，会把行撑出卡片（`PITFALLS.md` G96）。完整正文走 `persona.show` / `metis show`，在独立浮层里按 Markdown 渲染。
 - 本地人设详情浮层**固定宽度**（680，窄窗收缩）；「说明 / 文件 / 适用执行器 / 适用模型」用标签在上、值在下并自动换行（`detail_block`）—— 放进 `widgets::key_value` 的横向行会被长文本撑宽浮层。
+- Markdown 正文统一走 `markdown_body`：外面包一层固定宽度的横向滚动区。**宽表格/超宽代码块在浮层内横向滚动**，不把弹框顶宽（`PITFALLS.md` G97）；人设详情与远端详情共用。
 - 详情是**独立浮层**（`Area + Order::Foreground`），不内联在列表下方；`Esc`、背景点击、右上角「关闭」都能关。提示词、参考资料、备注按 **Markdown** 渲染（`egui_commonmark`）。浮层正文滚动区必须同时设 `max_height` 与 `min_scrolled_height`（`Area` 的可用高度取自上一帧，只设上限会把正文压没，见 `PITFALLS.md` G89）。
 - 结果列表固定 480px 高（`max_height` + `min_scrolled_height`），超出在列表内滚动；内容不足时收缩到内容高度。分页控件留在滚动区外，不随结果数量把整页撑长。
 

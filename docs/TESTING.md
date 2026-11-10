@@ -163,7 +163,7 @@ pub struct TestClock { /* … */ }
 | `hub::tests::live_hub_list_and_detail_match_the_contract` | 能访问 `https://n.kkpt.tech:8443` | **2026-11-09 通过**：真实列表非空、详情 prompt 非空；默认 CI 用注入式假 fetch，不联网 |
 | `hub_import::tests::live_import_of_an_expert_with_skills` | 能访问 `https://n.kkpt.tech:8443` | **2026-11-09 通过**：真实导入一个带关联技能的 expert，人设与 `skills/<slug>/SKILL.md` 都落到临时 home |
 | GUI 远端库（agent-desktop 真实窗口） | 能访问 `https://n.kkpt.tech:8443` + 显示设备 | **2026-11-10 通过**：人设库屏 → 加载远端库 → 列表（480px 内部滚动）→ `详情：<名称>` → 详情浮层（作者/来源/下载 + Markdown 正文，可滚动）；临时 `METIS_HOME`。脚本直接无参数启动 `metis`（同一进程开窗），快照与聚焦按窗口 ID 操作。列表/浮层高度由 `the_hub_list_keeps_its_height_inside_the_page_scroll`、`the_hub_detail_overlay_keeps_its_body_height` 钉住 |
-| GUI 本地人设详情（agent-desktop 真实窗口） | 显示设备 + 本地有人设 | **2026-11-10 通过**：人设库 → 行内 `详情：<名称>` → 浮层（id/说明/字数/路径/适用标签 + Markdown 正文，固定宽 680）；长说明两行换行、浮层未被撑宽（`agent-desktop screenshot`）。列表说明截断由 `a_long_description_stays_inside_the_row_width`、浮层宽度由 `a_long_description_does_not_widen_the_persona_overlay` 钉住 |
+| GUI 本地人设详情（agent-desktop 真实窗口） | 显示设备 + 本地有人设 | **2026-11-10 通过**：人设库 → 行内 `详情：<名称>` → 浮层（id/说明/字数/路径/适用标签 + Markdown 正文，固定宽 680）；长说明两行换行、浮层未被撑宽；带宽表格的正文（临时 `METIS_HOME`）在浮层内横向滚动，弹框宽度不变（`agent-desktop screenshot`）。列表说明截断由 `a_long_description_stays_inside_the_row_width`、浮层宽度由 `a_long_description_does_not_widen_the_persona_overlay` / `a_wide_markdown_table_does_not_widen_the_persona_overlay` 钉住 |
 | `verify` 抓包（每家在用的 harness） | 本机已装该 harness | 未跑（M0） |
 | `armor run/judge` | 本机已装该 harness + 模型可用 | 未跑（M0） |
 | PI-Desktop 的 imported 插件热切 | PI-Desktop 便携版 | 未跑（M0） |

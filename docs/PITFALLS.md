@@ -1191,3 +1191,26 @@
   **验证要量图元的右边界**，不能只看"渲染出来了"（G38）：
   `a_long_description_stays_inside_the_row_width` 用 400px 宽的 `Ui` 渲染一行 20 遍的
   长说明，断言所有 shape 的 `visual_bounding_rect().max.x <= 404`。
+
+### G97. Markdown 表格会把浮层顶宽，`Area` 的 set_width 拦不住
+- **现象**：人设详情里正文带表格时，弹框又被撑到接近屏幕宽度（用户报"带表格的 md
+  还是会被撑开"）；纯文本时宽度是正常的。
+- **原因**：`egui_commonmark` 把表格画在**自己的横向滚动区**里，而这个滚动区默认
+  `auto_shrink` 为真，会收缩到 Grid 的内容宽度。表格列一多，内容宽度就超过外层
+  `Frame`，`Ui::set_width` 设的 max 只是"建议值"，`min_rect` 仍被撑开，最后
+  `Area` 按 `min_rect` 变大（实测 680 → 950）。
+- **规则**：**渲染 Markdown 前先在外面包一层固定宽度的横向滚动区**：
+  ```rust
+  let width = ui.available_width();
+  egui::ScrollArea::horizontal()
+      .max_width(width)
+      .auto_shrink([false, true])   // 宽度不缩到内容、高度跟着内容
+      .show(ui, |ui| {
+          ui.set_min_width(width);
+          egui_commonmark::CommonMarkViewer::new().show(ui, cache, text);
+      });
+  ```
+  超宽表格改为在浮层内横向滚动，弹框宽度保持不变；远近两处 Markdown
+  （`persona_detail_content` 与 `hub_detail_content`）都走同一个 `markdown_body`。
+  回归测试直接量 `AreaState.size.x`：
+  `a_wide_markdown_table_does_not_widen_the_persona_overlay`（修复前实测 950px）。
