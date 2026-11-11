@@ -120,6 +120,7 @@ M0–M10 的闭环已落地；当前没有进行中的条目。每项"能用"的
 - [x] M6.11 无障碍：键盘可达（`Alt+1..4`/`Ctrl+R`/`Ctrl+Enter`/`Ctrl+K`/`Esc`）、焦点加宽可见、减少动效（系统环境变量 + 应用内开关）。**未做**：真正的 accesskit 语义标注（egui 的集成需额外 feature）
 - [x] M6.12 布局验证：真机在 `900×620`（最小窗）与 `900×1400`（窄高）下截图确认 —— 无横向溢出、标签不被截断、可滚动。**未做**：150%/200% DPI
 - [x] M6.13 本地人设详情与列表宽度：`persona.show` 命令（正文 + 元数据，缺失 id 退出 2）+ `metis show <id>`（人类可读 / `--json`）；GUI 列表每行「详情」（无障碍名带行标识）打开**固定宽度 680** 的独立浮层，正文按 Markdown 渲染、长说明/路径自动换行、`Esc`/背景关闭；列表说明改为单独一行并截断，不再撑出卡片。证据：`persona_show_*`（2）、CLI `show_*`（2）、`a_long_description_stays_inside_the_row_width`、`a_long_description_does_not_widen_the_persona_overlay`、`a_wide_markdown_table_does_not_widen_the_persona_overlay`、`the_persona_detail_overlay_*`（2）、`the_persona_detail_renders_loading_and_error_states`、`an_empty_persona_body_is_explained_instead_of_blank`、app 详情加载/错误（2）；真机 agent-desktop 验证浮层宽度、换行与宽表格横向滚动
+- [x] M6.14 窗口可缩到 `640×480`：`MIN_WINDOW` 下调（原 `900×620`）；顶栏与状态条改 `horizontal_wrapped`；控制台人设卡片在窄宽度时动作按钮换到第二行、人设下拉截断；侧栏仍低于 900 自动折叠。证据：`topbar_wraps_without_losing_actions_at_the_minimum_width`、`every_screen_renders_inside_the_minimum_content_width`、`every_screen_fits_the_minimum_window_width`（完整三面板）；真机 640 宽截图确认顶栏换行、四个屏幕无横向溢出
 
 ## M7 打包与发布 — owner: stabilize
 

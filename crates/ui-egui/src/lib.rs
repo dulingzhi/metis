@@ -58,4 +58,7 @@ pub const APP_ID: &str = "dev.metis.console";
 pub const DEFAULT_WINDOW: [f32; 2] = [1280.0, 860.0];
 
 /// 窗口最小尺寸。
-pub const MIN_WINDOW: [f32; 2] = [900.0, 620.0];
+///
+/// 侧栏在 `FOLD_BELOW`（900）以下自动折成 56px，顶栏与状态条会换行，
+/// 所以可以缩到 640×480；再小内容区会挤到不可用的程度。
+pub const MIN_WINDOW: [f32; 2] = [640.0, 480.0];

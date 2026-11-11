@@ -898,6 +898,43 @@ mod tests {
     }
 
     #[test]
+    fn every_screen_fits_the_minimum_window_width() {
+        // 真实窗口布局的最小宽度：顶栏 + 折叠侧栏 + 内容 + 状态条一起画，
+        // 任何横向溢出都会把控件挤出窗口。这里按 `MIN_WINDOW` 跑完整三面板。
+        let tokens = Tokens::LIGHT;
+        for screen in Screen::ALL {
+            let (_dir, mut app) = app();
+            app.set_screen(screen);
+            let ctx = egui::Context::default();
+            Tokens::install_with(&ctx, tokens);
+            let raw = egui::RawInput {
+                screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(crate::MIN_WINDOW[0], crate::MIN_WINDOW[1]))),
+                ..Default::default()
+            };
+            let mut output = ctx.run_ui(raw, |ui| {
+                egui::Panel::top("topbar").show(ui, |ui| crate::chrome::topbar(&mut app, ui, &tokens));
+                egui::Panel::left("nav")
+                    .exact_size(crate::sidebar::width(&app, ui.ctx()))
+                    .resizable(false)
+                    .frame(egui::Frame::new().fill(tokens.chrome).inner_margin(egui::Margin::symmetric(8, 0)))
+                    .show(ui, |ui| crate::sidebar::show(&mut app, ui));
+                egui::Panel::bottom("status").show(ui, |ui| crate::chrome::statusbar(&mut app, ui, &tokens));
+                egui::CentralPanel::default().frame(egui::Frame::new().fill(tokens.canvas).inner_margin(egui::Margin::symmetric(24, 18))).show(ui, |ui| {
+                    match screen {
+                        Screen::Console => screens::console(&mut app, ui),
+                        Screen::Library => screens::library(&mut app, ui),
+                        Screen::Diagnostics => screens::diagnostics(&mut app, ui),
+                        Screen::About => screens::about(&mut app, ui),
+                    }
+                });
+            });
+            output.textures_delta.clear();
+            let max_x = output.shapes.iter().map(|clipped| clipped.shape.visual_bounding_rect().max.x).fold(0.0_f32, f32::max);
+            assert!(max_x <= crate::MIN_WINDOW[0] + 4.0, "{screen:?} 在最小窗口下画到了 {max_x}px（窗口 {}px）", crate::MIN_WINDOW[0]);
+        }
+    }
+
+    #[test]
     fn invoke_reports_errors_with_remediation() {
         let (_dir, mut app) = app();
         assert!(app.invoke("persona.use", json!({"persona": "ghost"})).is_none());

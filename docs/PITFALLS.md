@@ -1214,3 +1214,20 @@
   （`persona_detail_content` 与 `hub_detail_content`）都走同一个 `markdown_body`。
   回归测试直接量 `AreaState.size.x`：
   `a_wide_markdown_table_does_not_widen_the_persona_overlay`（修复前实测 950px）。
+
+### G98. 调小最小窗口不是只改一个常量
+- **现象**：把 `MIN_WINDOW` 从 `900×620` 降到 `640×480` 后，窗口能缩了，但控制台的人设
+  卡片被裁掉右半边，顶栏按钮也少了一截。
+- **原因**：以下几处都按"一行放得下"写的：
+  1. 顶栏/状态条是 `ui.horizontal`（不换行，超出部分被窗口裁掉）；
+  2. 控制台人设卡片把标题、下拉、分段控件、两个按钮塞在同一行，`with_layout(right_to_left)`
+     在剩余宽度不足时会把按钮挤出可视区；
+  3. 下拉框 `width()` 只是最小宽度，长名字会把卡片撑破。
+- **规则**：**最小尺寸是一个布局契约，不是一个常量**。改 `MIN_WINDOW` 必须同时：
+  - 把面板级的横排改成 `horizontal_wrapped`（顶栏、状态条）；
+  - 窄宽度下把动作按钮换到第二行（控制台人设卡片，阈值 620）；
+  - 可能变长的下拉/标签用 `wrap_mode(Truncate)`；
+  - 加一条**完整三面板**的最小尺寸渲染测试，量 `max_x <= 窗口宽度`
+    （`every_screen_fits_the_minimum_window_width`），而不只是单屏渲染。
+  注意 `agent-desktop resize-window` 是 SetWindowPos，会绕过 Windows 的最小尺寸限制；
+  用它验"布局能否放下"时要按逻辑像素换算，不能拿它当"用户能拖到多大"的证据。

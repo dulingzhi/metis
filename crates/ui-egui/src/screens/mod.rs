@@ -58,6 +58,21 @@ fn power_strip(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     });
 }
 
+/// 人设卡片右侧的两个动作。抽出来是为了窄窗口时能换到第二行。
+fn persona_actions(app: &mut MetisApp, ui: &mut Ui, change: model::DraftChange) {
+    let can_apply = change.is_dirty() && app.draft.persona.is_some();
+    if widgets::primary(ui, "应用变更", can_apply).clicked() {
+        if let Some(persona) = app.draft.persona.clone() {
+            app.invoke("persona.use", json!({ "persona": persona }));
+        }
+        app.invoke("state.mode", json!({ "mode": app.draft.mode.as_str() }));
+        app.spawn_apply();
+    }
+    if widgets::secondary(ui, "撤销").clicked() {
+        app.draft = crate::state::Draft::from_saved(app.snapshot.saved_persona.clone(), app.snapshot.saved_mode);
+    }
+}
+
 /// 人设与模式。
 fn persona_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
     let change = app.draft.change(app.snapshot.saved_persona.as_deref(), app.snapshot.saved_mode);
@@ -68,6 +83,10 @@ fn persona_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
         // 为什么改：原来的三行大瓦片版本一个人设卡片就要 ~320 逻辑像素，
         // 而 200% 缩放的笔记本上可用高度只有 ~319 —— 执行器卡片永远在折线以下，
         // 等于控制台的主功能被自己的配置区挡住了。
+        //
+        // 窄窗口（最小 640）时一行放不下，动作按钮换到第二行；宽度足够时仍钉在右侧。
+        let narrow = ui.available_width() < 620.0;
+        let picker_width = if narrow { 120.0 } else { 170.0 };
         ui.horizontal(|ui| {
             widgets::section_title(ui, "人设与模式");
             widgets::pill(ui, change.label(), t.text_faint, t.raised);
@@ -83,9 +102,12 @@ fn persona_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
                 .map(|p| p.name.clone())
                 .or_else(|| app.draft.persona.clone())
                 .unwrap_or_else(|| "未选择人设".to_owned());
-            egui::ComboBox::from_id_salt("persona-picker").selected_text(RichText::new(current).size(font::BODY).color(t.text)).width(170.0).show_ui(
-                ui,
-                |ui| {
+            egui::ComboBox::from_id_salt("persona-picker")
+                .selected_text(RichText::new(current).size(font::BODY).color(t.text))
+                .width(picker_width)
+                // 名字过长时省略，而不是把下拉框撑出卡片。
+                .wrap_mode(egui::TextWrapMode::Truncate)
+                .show_ui(ui, |ui| {
                     for persona in &app.snapshot.personas {
                         let selected = app.draft.persona.as_deref() == Some(persona.id.as_str());
                         let label = if persona.name == persona.id { persona.name.clone() } else { format!("{}\u{2003}{}", persona.name, persona.id) };
@@ -93,8 +115,7 @@ fn persona_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
                             app.draft.persona = Some(persona.id.clone());
                         }
                     }
-                },
-            );
+                });
 
             ui.add_space(space::S);
 
@@ -107,21 +128,20 @@ fn persona_card(app: &mut MetisApp, ui: &mut Ui, t: &Tokens) {
                 app.draft.mode = modes[index];
             }
 
-            // 操作按钮钉右侧。
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                let can_apply = change.is_dirty() && app.draft.persona.is_some();
-                if widgets::primary(ui, "应用变更", can_apply).clicked() {
-                    if let Some(persona) = app.draft.persona.clone() {
-                        app.invoke("persona.use", json!({ "persona": persona }));
-                    }
-                    app.invoke("state.mode", json!({ "mode": app.draft.mode.as_str() }));
-                    app.spawn_apply();
-                }
-                if widgets::secondary(ui, "撤销").clicked() {
-                    app.draft = crate::state::Draft::from_saved(app.snapshot.saved_persona.clone(), app.snapshot.saved_mode);
-                }
-            });
+            if !narrow {
+                // 操作按钮钉右侧。
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    persona_actions(app, ui, change);
+                });
+            }
         });
+
+        if narrow {
+            ui.add_space(space::S);
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                persona_actions(app, ui, change);
+            });
+        }
 
         // 模式说明：一行，跟着当前选择变。比三个瓦片各带一句省得多。
         ui.add_space(2.0);
@@ -1496,6 +1516,28 @@ mod tests {
         });
         output.textures_delta.clear();
         output.shapes.len()
+    }
+
+    #[test]
+    fn every_screen_renders_inside_the_minimum_content_width() {
+        // 窗口最小 640：减去折叠侧栏（56）与 CentralPanel 左右留白（24×2），
+        // 内容区只有 536px。每个屏幕都不能画出这个宽度。
+        let width = crate::MIN_WINDOW[0] - crate::sidebar::FOLDED - 48.0;
+        for screen in crate::state::Screen::ALL {
+            let (_dir, mut app) = app();
+            let ctx = egui::Context::default();
+            Tokens::install_full(&ctx, Tokens::LIGHT);
+            let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 380.0))), ..Default::default() };
+            let mut output = ctx.run_ui(raw, |ui| match screen {
+                crate::state::Screen::Console => console(&mut app, ui),
+                crate::state::Screen::Library => library(&mut app, ui),
+                crate::state::Screen::Diagnostics => diagnostics(&mut app, ui),
+                crate::state::Screen::About => about(&mut app, ui),
+            });
+            output.textures_delta.clear();
+            let max_x = output.shapes.iter().map(|clipped| clipped.shape.visual_bounding_rect().max.x).fold(0.0_f32, f32::max);
+            assert!(max_x <= width + 4.0, "{screen:?} 在最小内容宽度（{width}px）下画到了 {max_x}px");
+        }
     }
 
     #[test]

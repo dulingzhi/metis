@@ -73,7 +73,7 @@
 | **一次性问答 `ask`**（12 家有参数形状，其余明确拒绝） | `crates/harness/src/launch_spec.rs::oneshot` | `oneshot_covers_the_known_harnesses_and_refuses_the_rest`、`ask_refuses_a_harness_without_a_oneshot_mode` |
 | CLI：`status`/`ls`/`show`/`use`/`mode`/`pause`/`resume`/`arm`/`disarm`/`apply`/`persona`/`rm`/`harnesses`/`doctor`/`launch`/`ask`/`hub` | `apps/metis/src/main.rs` | `apps/metis/tests/cli.rs`（**36 个端到端用例**，含 hub 帮助与坏输入、`show` 的人类可读与 `--json`） |
 | 退出码约定（0 成功 / 1 运行失败 / 2 调用方传错） | `apps/metis/src/main.rs::exit_code_for` | `using_a_missing_persona_fails_with_code_2` 等 |
-| 桌面 GUI（4 个屏幕 + 主题 token + **系统 CJK 字体** + 后台任务表） | `crates/ui-egui/src/*.rs`、`apps/metis-gui/src/lib.rs`、`apps/metis/src/main.rs` | `screens::tests::*`（5 个无头渲染）、`app::tests::*`（7 个）、`cjk_font_is_installed_on_this_machine`、`launch_tests::*`（无参数→GUI / 有参数→CLI）。**已在真机开窗并截图确认渲染** |
+| 桌面 GUI（4 个屏幕 + 主题 token + **系统 CJK 字体** + 后台任务表） | `crates/ui-egui/src/*.rs`、`apps/metis-gui/src/lib.rs`、`apps/metis/src/main.rs` | `screens::tests::*`（无头渲染 + 最小内容宽度）、`app::tests::*`（含**完整三面板在 640×480 最小窗口下无横向溢出**）、`topbar_wraps_without_losing_actions_at_the_minimum_width`、`cjk_font_is_installed_on_this_machine`、`launch_tests::*`（无参数→GUI / 有参数→CLI）。最小窗口 `640×480`（原 `900×620`），侧栏自动折叠、顶栏/状态条换行。**已在真机开窗并截图确认渲染** |
 | 工程门禁：`layers` / `docs` / `secrets` / `pending` / `ci` / `version` / `coverage` | `xtask/src/main.rs`、`xtask/src/layers.rs` | `xtask` 的 12 个自检用例（含"未注册 crate 必须失败"） |
 | 测试夹具（临时 home、假执行器、golden 比对） | `crates/testkit/src/lib.rs` | `testkit::tests::*`（7 个） |
 

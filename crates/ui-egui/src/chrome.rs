@@ -23,7 +23,10 @@ pub fn topbar(app: &mut MetisApp, ui: &mut Ui, tokens: &Tokens) {
     // 可靠做法：**先**用普通水平布局把按钮全部画出来（让面板按内容撑高），
     // 左侧状态文字放在最后 —— 顺序换了，但视觉上仍然是从左到右
     // 「状态 … 按钮组」，因为我们把状态文字放在独立的一行子 UI 里。
-    ui.horizontal(|ui| {
+    //
+    // `horizontal_wrapped`：窗口缩到最小（640）时按钮换行，不能把它们静默挤出右边。
+    // `Panel::top` 按内容撑高，换行后顶栏自然变两行。
+    ui.horizontal_wrapped(|ui| {
         let busy = app.jobs.running_labels();
         let status = if busy.is_empty() { "就绪".to_owned() } else { format!("{}…", busy.join("、")) };
         ui.label(RichText::new(status).size(size::SMALL).color(tokens.text_faint));
@@ -57,7 +60,8 @@ pub fn topbar(app: &mut MetisApp, ui: &mut Ui, tokens: &Tokens) {
 /// 左侧导航。
 /// 底部状态栏。
 pub fn statusbar(app: &mut MetisApp, ui: &mut Ui, tokens: &Tokens) {
-    ui.horizontal(|ui| {
+    // 窄窗口下长路径/长提示要能换行，而不是被裁掉。
+    ui.horizontal_wrapped(|ui| {
         ui.label(RichText::new(&app.snapshot.state_path).size(size::CAPTION).color(tokens.text_faint));
         if let Some(notice) = &app.notice {
             let color = match notice.tone {
@@ -141,6 +145,28 @@ mod tests {
         // 顶栏的高度必须容纳一行控件（塌成 0 高说明布局被压没了）。
         let bottom = output.shapes.iter().map(|clipped| clipped.shape.visual_bounding_rect().bottom()).fold(0.0_f32, f32::max);
         assert!(bottom > 8.0, "顶栏内容高度只有 {bottom}，控件没有位置");
+    }
+
+    #[test]
+    fn topbar_wraps_without_losing_actions_at_the_minimum_width() {
+        // 窗口最小宽度是 640：按钮一行放不下，必须换行而不是被挤出右边。
+        let (_dir, mut app) = app();
+        let ctx = egui::Context::default();
+        Tokens::install(&ctx);
+        let tokens = Tokens::LIGHT;
+        let width = crate::MIN_WINDOW[0];
+        let raw = egui::RawInput { screen_rect: Some(egui::Rect::from_min_size(egui::Pos2::ZERO, egui::vec2(width, 900.0))), ..Default::default() };
+        let mut output = ctx.run_ui(raw, |ui| {
+            egui::Panel::top("topbar").show(ui, |ui| {
+                super::topbar(&mut app, ui, &tokens);
+            });
+        });
+        output.textures_delta.clear();
+
+        let max_x = output.shapes.iter().map(|clipped| clipped.shape.visual_bounding_rect().max.x).fold(0.0_f32, f32::max);
+        assert!(max_x <= width + 1.0, "最小窗口（{width}px）下顶栏画到了 {max_x}px，控件被挤出右边");
+        let union = output.shapes.iter().fold(egui::Rect::NOTHING, |rect, clipped| rect.union(clipped.shape.visual_bounding_rect()));
+        assert!(union.height() > 35.0, "顶栏应换行成多行，实际内容高度只有 {}", union.height());
     }
 
     #[test]
